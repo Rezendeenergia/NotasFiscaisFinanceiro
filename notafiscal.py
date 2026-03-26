@@ -181,78 +181,72 @@ def montar_nome(numero_nf, emitente):
 
 def _extrair_emitente_por_bbox(pdf_bytes):
     """
-    Extrai o nome do emitente usando posicao (bbox) das palavras com x_tolerance=1.
-    Funciona para todos os tipos de NF/NFS-e, inclusive com texto colado.
+    Extrai o nome do emitente usando posicao (bbox) com x_tolerance=1.
+    Funciona para todos os tipos: DANFSe, NFSe prefeituras, NF-e DANFE/Omie.
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             page = pdf.pages[0]
             words = page.extract_words(x_tolerance=1, y_tolerance=3)
 
-        # Cada bloco define sequencias de palavras que marcam inicio, fim e label do nome
-        # Formato: (palavras_inicio, palavras_fim, palavras_label_nome)
         blocos = [
-            # DANFSe Santarem: "EMITENTE DA NFS-E" -> "NOME / NOME EMPRESARIAL" -> nome -> "TOMADOR"
-            (['EMITENTE', 'DA', 'NFS'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
-            # NFSe prefeituras (Belem, etc): "EMITENTE PRESTADOR DO SERVICO" -> "NOME / NOME EMPRESARIAL"
+            # DANFSe Santarem / NFSe: "EMITENTE DA NFS" -> "NOME ... EMPRESARIAL" -> nome -> "TOMADOR"
+            (['EMITENTE', 'NFS'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
+            # NFSe prefeituras (Belem): "EMITENTE PRESTADOR" -> "NOME ... EMPRESARIAL" -> nome
             (['EMITENTE', 'PRESTADOR'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
-            # NF-e Omie: "IDENTIFICACAO DO EMITENTE" -> nome logo abaixo
+            # NF-e Omie: "IDENTIFICACAO ... EMITENTE" -> "NOME ... EMPRESARIAL" -> nome
             (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['NOME', 'EMPRESARIAL']),
-            # NF-e SEFAZ: "IDENTIFICACAO DO EMITENTE" -> razao social
+            # NF-e SEFAZ: "IDENTIFICACAO ... EMITENTE" -> "RAZAO SOCIAL" -> nome
             (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['RAZAO', 'SOCIAL']),
         ]
 
-        def palavras_na_linha(words_list, y_ref, y_min_offset=3, y_max_offset=22, x_max=400):
-            """Retorna palavras na linha y_ref + offset, ignorando emails e numeros."""
+        def achar_y_subsequencia(words_list, palavras, y_min=0, y_max=9999):
+            """
+            Acha o Y de uma linha que contenha todas as palavras da lista
+            em qualquer ordem/posicao (nao precisa ser consecutivas).
+            Agrupa palavras pela mesma linha (mesmo Y arredondado).
+            """
+            # Agrupar por linha (round Y a 2 casas)
+            linhas = {}
+            for w in words_list:
+                if not (y_min <= w['top'] <= y_max):
+                    continue
+                y_key = round(w['top'], 0)
+                linhas.setdefault(y_key, []).append(_ascii(w['text']).upper())
+
+            for y_key in sorted(linhas.keys()):
+                tokens = ' '.join(linhas[y_key])
+                if all(p in tokens for p in palavras):
+                    return float(y_key)
+            return None
+
+        def palavras_na_linha(words_list, y_ref, y_offset_min=3, y_offset_max=22, x_max=420):
+            """Coleta palavras na proxima linha apos y_ref."""
             resultado = []
             for w in words_list:
-                if y_ref + y_min_offset <= w['top'] <= y_ref + y_max_offset and w['x0'] < x_max:
+                if y_ref + y_offset_min <= w['top'] <= y_ref + y_offset_max and w['x0'] < x_max:
                     t = _ascii(w['text'])
-                    if '@' in t: break
-                    if re.match(r'^\d{2}\.\d{3}', t): break  # CNPJ
-                    if re.match(r'^[\d./@\-()+]+$', t): continue
+                    if '@' in t:
+                        break
+                    if re.match(r'^\d{2}\.\d{3}', t):
+                        break
+                    if re.match(r'^[\d./@\-()+]+$', t):
+                        continue
                     resultado.append(t)
             return resultado
 
-        def achar_y_sequencia(words_list, sequencia, y_min=0, y_max=9999):
-            """Acha o Y da primeira palavra de uma sequencia de palavras consecutivas."""
-            seq_upper = [s.upper() for s in sequencia]
-            for i, w in enumerate(words_list):
-                if not (y_min <= w['top'] <= y_max):
-                    continue
-                t = _ascii(w['text']).upper()
-                if seq_upper[0] in t:
-                    # Verificar se as proximas palavras batem
-                    match = True
-                    for j, seq_word in enumerate(seq_upper[1:], 1):
-                        if i + j >= len(words_list):
-                            match = False; break
-                        nxt = _ascii(words_list[i+j]['text']).upper()
-                        if seq_word not in nxt:
-                            match = False; break
-                    if match:
-                        return w['top']
-            return None
-
         for palavras_inicio, palavras_fim, palavras_label in blocos:
-            # Achar Y do inicio do bloco emitente
-            y_inicio = achar_y_sequencia(words, palavras_inicio)
+            y_inicio = achar_y_subsequencia(words, palavras_inicio)
             if y_inicio is None:
                 continue
 
-            # Achar Y do fim (bloco tomador/destinatario), apos o inicio
-            y_fim = achar_y_sequencia(words, palavras_fim, y_min=y_inicio + 5)
-            if y_fim is None:
-                y_fim = 9999
+            y_fim = achar_y_subsequencia(words, palavras_fim, y_min=y_inicio + 5) or 9999
 
-            # Achar Y do label "Nome / Nome Empresarial" ou "Razao Social" dentro do bloco
-            y_label = achar_y_sequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
+            y_label = achar_y_subsequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
             if y_label is None:
                 continue
 
-            # Coletar palavras na linha seguinte ao label
-            nome_words = palavras_na_linha(words, y_label, y_min_offset=3, y_max_offset=22, x_max=400)
-
+            nome_words = palavras_na_linha(words, y_label, x_max=420)
             if nome_words:
                 nome = ' '.join(nome_words).strip()
                 if nome and len(nome) >= 3:
