@@ -181,71 +181,82 @@ def montar_nome(numero_nf, emitente):
 
 def _extrair_emitente_por_bbox(pdf_bytes):
     """
-    Para PDFs com texto colado (ex: DANFSe Santarem), usa extract_words com
-    x_tolerance=1 para separar caracteres individuais e reconstruir o nome.
-    Busca palavras na mesma linha Y que o label 'Nome/NomeEmpresarial' do EMITENTE.
+    Extrai o nome do emitente usando posicao (bbox) das palavras com x_tolerance=1.
+    Funciona para todos os tipos de NF/NFS-e, inclusive com texto colado.
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             page = pdf.pages[0]
+            words = page.extract_words(x_tolerance=1, y_tolerance=3)
 
-            # Localizar Y do label "Nome/NomeEmpresarial" do bloco EMITENTE
-            words_normal = page.extract_words(x_tolerance=3, y_tolerance=3)
+        # Cada bloco define sequencias de palavras que marcam inicio, fim e label do nome
+        # Formato: (palavras_inicio, palavras_fim, palavras_label_nome)
+        blocos = [
+            # DANFSe Santarem: "EMITENTE DA NFS-E" -> "NOME / NOME EMPRESARIAL" -> nome -> "TOMADOR"
+            (['EMITENTE', 'DA', 'NFS'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
+            # NFSe prefeituras (Belem, etc): "EMITENTE PRESTADOR DO SERVICO" -> "NOME / NOME EMPRESARIAL"
+            (['EMITENTE', 'PRESTADOR'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
+            # NF-e Omie: "IDENTIFICACAO DO EMITENTE" -> nome logo abaixo
+            (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['NOME', 'EMPRESARIAL']),
+            # NF-e SEFAZ: "IDENTIFICACAO DO EMITENTE" -> razao social
+            (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['RAZAO', 'SOCIAL']),
+        ]
 
-            emitente_y = None
-            tomador_y = None
+        def palavras_na_linha(words_list, y_ref, y_min_offset=3, y_max_offset=22, x_max=400):
+            """Retorna palavras na linha y_ref + offset, ignorando emails e numeros."""
+            resultado = []
+            for w in words_list:
+                if y_ref + y_min_offset <= w['top'] <= y_ref + y_max_offset and w['x0'] < x_max:
+                    t = _ascii(w['text'])
+                    if '@' in t: break
+                    if re.match(r'^\d{2}\.\d{3}', t): break  # CNPJ
+                    if re.match(r'^[\d./@\-()+]+$', t): continue
+                    resultado.append(t)
+            return resultado
 
-            for w in words_normal:
-                t = w['text'].upper()
-                if 'EMITENTEDANFS' in t or 'EMITENTE' in t:
-                    emitente_y = w['top']
-                if 'TOMADORDOSERVICO' in t or 'TOMADOR' in t:
-                    if emitente_y is not None:
-                        tomador_y = w['top']
-                        break
-                if 'NOME/NOMEEMPRESARIAL' in t and emitente_y is not None and tomador_y is None:
-                    nome_label_y = w['top']
+        def achar_y_sequencia(words_list, sequencia, y_min=0, y_max=9999):
+            """Acha o Y da primeira palavra de uma sequencia de palavras consecutivas."""
+            seq_upper = [s.upper() for s in sequencia]
+            for i, w in enumerate(words_list):
+                if not (y_min <= w['top'] <= y_max):
+                    continue
+                t = _ascii(w['text']).upper()
+                if seq_upper[0] in t:
+                    # Verificar se as proximas palavras batem
+                    match = True
+                    for j, seq_word in enumerate(seq_upper[1:], 1):
+                        if i + j >= len(words_list):
+                            match = False; break
+                        nxt = _ascii(words_list[i+j]['text']).upper()
+                        if seq_word not in nxt:
+                            match = False; break
+                    if match:
+                        return w['top']
+            return None
 
-            if emitente_y is None:
-                return None
+        for palavras_inicio, palavras_fim, palavras_label in blocos:
+            # Achar Y do inicio do bloco emitente
+            y_inicio = achar_y_sequencia(words, palavras_inicio)
+            if y_inicio is None:
+                continue
 
-            # Pegar todas as palavras com x_tolerance=1 (separa caracteres)
-            words_fine = page.extract_words(x_tolerance=1, y_tolerance=3)
+            # Achar Y do fim (bloco tomador/destinatario), apos o inicio
+            y_fim = achar_y_sequencia(words, palavras_fim, y_min=y_inicio + 5)
+            if y_fim is None:
+                y_fim = 9999
 
-            # A linha do nome do emitente esta entre o label Nome/NomeEmpresarial
-            # e o bloco TOMADOR — pegar palavras com Y maior que o label e menor que tomador
-            # Na pratica: pegar palavras na faixa Y = [nome_label_y + 5, nome_label_y + 20]
-            # e x0 < 250 (coluna esquerda, antes do email)
+            # Achar Y do label "Nome / Nome Empresarial" ou "Razao Social" dentro do bloco
+            y_label = achar_y_sequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
+            if y_label is None:
+                continue
 
-            # Encontrar Y exato do label Nome/NomeEmpresarial do emitente
-            nome_y = None
-            passou_emitente = False
-            passou_tomador = False
-            for w in words_normal:
-                t = w['text'].upper()
-                if 'EMITENTEDANFS' in t:
-                    passou_emitente = True
-                if passou_emitente and 'TOMADORDOSERVICO' in t:
-                    passou_tomador = True
-                    break
-                if passou_emitente and not passou_tomador and 'NOME/NOMEEMPRESARIAL' in t:
-                    nome_y = w['top']
-                    break
-
-            if nome_y is None:
-                return None
-
-            # Pegar palavras na linha abaixo do label (nome_y + 5 a +18)
-            # e na coluna esquerda (x0 < 280, antes do email)
-            nome_words = [
-                w['text'] for w in words_fine
-                if nome_y + 4 <= w['top'] <= nome_y + 18
-                and w['x0'] < 280
-                and not re.match(r'^[\d./@-]+$', w['text'])  # ignorar email/cnpj
-            ]
+            # Coletar palavras na linha seguinte ao label
+            nome_words = palavras_na_linha(words, y_label, y_min_offset=3, y_max_offset=22, x_max=400)
 
             if nome_words:
-                return ' '.join(nome_words)
+                nome = ' '.join(nome_words).strip()
+                if nome and len(nome) >= 3:
+                    return nome
 
     except Exception:
         pass
@@ -309,6 +320,11 @@ def extrair_info_nota_fiscal(pdf_bytes):
                     break
 
         # ── Emitente (fornecedor que emitiu a NF) ─────────────────────────
+        # 0. Tentativa bbox (funciona para todos os tipos, inclusive texto colado)
+        emitente_bbox = _extrair_emitente_por_bbox(pdf_bytes)
+        if emitente_bbox and candidato_valido(emitente_bbox):
+            emitente = emitente_bbox
+
         # 1. Omie: "RECEBEMOS DE [EMPRESA] OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
