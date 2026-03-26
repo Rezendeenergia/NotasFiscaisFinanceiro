@@ -6,7 +6,6 @@ import re
 import unicodedata
 from datetime import datetime
 
-
 CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -81,12 +80,17 @@ hr { border-color:var(--cinza-borda) !important; margin:1.5rem 0 !important; }
 """
 
 
-def _ascii(txt):
-    """Remove acentos e normaliza para ASCII — facilita as regex."""
+# =============================================================================
+#  UTILITARIOS
+# =============================================================================
+
+def ascii_normalizar(txt):
+    """Remove acentos e converte para ASCII puro (facilita regex)."""
     return unicodedata.normalize('NFKD', txt).encode('ascii', 'ignore').decode('ascii')
 
 
-def _normalizar_data(raw):
+def normalizar_data(raw):
+    """Converte qualquer formato de data para DD-MM-YYYY."""
     raw = raw.strip()
     m = re.match(r'^(\d{4})[/-](\d{2})[/-](\d{2})$', raw)
     if m:
@@ -101,7 +105,8 @@ def _normalizar_data(raw):
     return None
 
 
-def _valido(c):
+def candidato_valido(c):
+    """Verifica se o candidato a emitente parece um nome de empresa valido."""
     c = c.strip()
     if len(c) < 3:
         return False
@@ -111,28 +116,74 @@ def _valido(c):
             'DOCUMENTO', 'AUXILIAR', 'ELETRONICA', 'ENTRADA', 'SAIDA', 'FOLHA',
             'NATUREZA', 'PROTOCOLO', 'INSCRICAO', 'VENDA', 'RECEBEMOS', 'RECEBI',
             'DANFE', 'ABAIXO', 'SERIE']
-    cu = _ascii(c).upper()
+    cu = ascii_normalizar(c).upper()
     return not any(cu.startswith(l) for l in lixo)
 
 
+def extrair_numero_nf(texto):
+    """
+    Extrai o numero da NF/NFS-e corretamente.
+    Suporta: NF-e DANFE, Omie, DANFSe Santarem, NFSe prefeituras.
+    """
+    # 1. DANFSe Santarem: "NumerodaNFS-e Competencia DataHora\n30 09/02/2026..."
+    m = re.search(r'NumerodaNFS-e\s+\S+\s+\S+\s*\n(\d+)\s+', texto, re.IGNORECASE)
+    if m:
+        try: return str(int(m.group(1)))
+        except ValueError: pass
 
-def _extrair_numero_nf(texto):
-    """Extrai numero da NF e retorna sem zeros a esquerda. Ex: '000.202.001' -> '202001'"""
-    for p in [
-        r'N[o\.]+\s*([\d.]{3,})',
-        r'N[Ff][Ee]?[\s#.]*([\d.]{3,})',
-    ]:
-        m = re.search(p, texto, re.IGNORECASE)
-        if m:
-            raw = m.group(1).replace('.', '')
-            try:
-                return str(int(raw))
-            except ValueError:
-                continue
+    # 2. NFSe Belem/prefeituras: "Numero / Serie\n09/12/2025 11:55:31 12/2025 9313 / E"
+    m = re.search(r'Numero\s*/\s*Serie[^\n]*\n[^\n]*?(\d{2,})\s*/\s*[A-Z]', texto, re.IGNORECASE)
+    if m:
+        try: return str(int(m.group(1)))
+        except ValueError: pass
+
+    # 3. NFSe generica: "Numero da NFS-e\n30"
+    m = re.search(r'Numero\s+da\s+NFS-?e\s*\n(\d+)', texto, re.IGNORECASE)
+    if m:
+        try: return str(int(m.group(1)))
+        except ValueError: pass
+
+    # 4. DANFE NF-e: linha "No 202.001" ou "No. 000.202.001" seguida de "Serie" ou "DATA"
+    m = re.search(
+        r'(?:^|\n)\s*N[o.]?\s*\.?\s*([\d. ]+)\s*\n\s*(?:Serie|SERIE|DATA|Folha|FOLHA)',
+        texto, re.IGNORECASE | re.MULTILINE
+    )
+    if m:
+        raw = m.group(1).replace('.', '').replace(' ', '')
+        try: return str(int(raw))
+        except ValueError: pass
+
+    # 5. Fallback: No/N. numero curto (max 9 digitos, evita chave de acesso)
+    m = re.search(r'N[o.]+\s*([\d.]{1,12})(?:\s|$)', texto, re.IGNORECASE | re.MULTILINE)
+    if m:
+        raw = m.group(1).replace('.', '').replace(' ', '')
+        if len(raw) <= 9:
+            try: return str(int(raw))
+            except ValueError: pass
+
     return None
 
 
+def limpar_nome(nome):
+    """Remove caracteres invalidos e normaliza para maiusculas."""
+    nome = re.sub(r'[<>:"/\\|?*]', '', nome)
+    return ' '.join(nome.split()).upper()
+
+
+def montar_nome(numero_nf, emitente):
+    """Monta o nome final: 'NF 202001 - EMITENTE.PDF'"""
+    return "NF {} - {}.PDF".format(numero_nf, emitente)
+
+
+# =============================================================================
+#  EXTRACAO DE DADOS DA NOTA FISCAL
+# =============================================================================
+
 def extrair_info_nota_fiscal(pdf_bytes):
+    """
+    Extrai numero, emitente, tipo, data e valor de um PDF de NF.
+    Retorna: (data, emitente, tipo_nf, valor, numero_nf)
+    """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             texto_raw = ""
@@ -142,15 +193,19 @@ def extrair_info_nota_fiscal(pdf_bytes):
                     texto_raw += t + "\n"
 
         if not texto_raw.strip():
-            return None, None, None, None
+            return None, None, None, None, None
 
-        # Versao ASCII para regex (sem acentos)
-        texto = _ascii(texto_raw)
+        # Trabalhar com texto ASCII (sem acentos) para facilitar regex
+        texto = ascii_normalizar(texto_raw)
         texto_up = texto.upper()
 
-        data = emitente = tipo_nf = valor = numero_nf = None
+        data = None
+        emitente = None
+        tipo_nf = None
+        valor = None
+        numero_nf = None
 
-        # ── Tipo ──
+        # ── Tipo ──────────────────────────────────────────────────────────
         if "DANFE" in texto_up or "DOCUMENTO AUXILIAR DA NOTA FISCAL" in texto_up:
             tipo_nf = "NF-e"
         elif "NOTA FISCAL DE SERVI" in texto_up or "NFS-E" in texto_up:
@@ -162,16 +217,13 @@ def extrair_info_nota_fiscal(pdf_bytes):
         else:
             tipo_nf = "Documento"
 
-        # ── Numero da NF ──
-        numero_nf = _extrair_numero_nf(texto)
+        # ── Numero da NF ──────────────────────────────────────────────────
+        numero_nf = extrair_numero_nf(texto)
 
-        # ── Data ──
+        # ── Data de Emissao ───────────────────────────────────────────────
         for p in [
-            # Omie no topo: "EMISSAO: 19/03/2026"
             r'EMISSAO:\s*(\d{2}[/\-]\d{2}[/\-]\d{4})',
-            # DANFE padrao: "DATA DA EMISSAO  19-03-2026"
             r'DATA\s+DA\s+EMISSAO\s+(\d{2}[/\-]\d{2}[/\-]\d{4})',
-            # Generico
             r'EMISSAO\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'Data\s+de\s+Competencia\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'(\d{4}-\d{2}-\d{2})',
@@ -179,82 +231,89 @@ def extrair_info_nota_fiscal(pdf_bytes):
         ]:
             m = re.search(p, texto, re.IGNORECASE)
             if m:
-                data = _normalizar_data(m.group(1))
+                data = normalizar_data(m.group(1))
                 if data:
                     break
 
-        # ── Emitente ──
+        # ── Emitente (fornecedor que emitiu a NF) ─────────────────────────
         # 1. Omie: "RECEBEMOS DE [EMPRESA] OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # 2. Padrao antigo: "RECEBI(EMOS) DE [EMPRESA], OS PRODUTOS"
+        # 2. Padrao SEFAZ: "RECEBI(EMOS) DE [EMPRESA], OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBI\(EMOS\)\s+DE\s+(.+?),\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # 3. Omie: linha apos "IDENTIFICACAO DO EMITENTE" antes de "Eletronica" / "0 -"
+        # 3. Omie: linha apos "IDENTIFICACAO DO EMITENTE"
         if not emitente:
             m = re.search(
                 r'IDENTIFICACAO\s+DO\s+EMITENTE[^\n]*\n([A-Z][A-Z0-9 &.,/\-]{2,70}?)\s+(?:Eletro|DANFE|0\s+-|1\s+-)',
                 texto, re.IGNORECASE
             )
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
+
+        # 4. DANFSe Santarem: "EMITENTEDANFS-e ... Nome/NomeEmpresarial\nNOME email"
+        if not emitente:
+            m = re.search(
+                r'EMITENTEDANFS-e.*?Nome/NomeEmpresarial[^\n]*\n([^\n]{3,80})',
+                texto, re.IGNORECASE | re.DOTALL
+            )
             if m:
-                c = m.group(1).strip()
-                if _valido(c):
+                c = re.split(r'\s+\S+@\S+', m.group(1))[0].strip()
+                if candidato_valido(c):
                     emitente = c
 
-        # 4. NFS-e: Prestador de Servicos
+        # 5. NFSe Belem/outras prefeituras: "EMITENTE PRESTADOR DO SERVICO ... Nome / Nome Empresarial\nNOME email"
+        if not emitente:
+            m = re.search(
+                r'EMITENTE\s+PRESTADOR\s+DO\s+SERVICO.*?Nome\s*/\s*Nome\s+Empresarial[^\n]*\n([^\n]{3,80})',
+                texto, re.IGNORECASE | re.DOTALL
+            )
+            if m:
+                c = re.split(r'\s+\S+@\S+', m.group(1))[0].strip()
+                if candidato_valido(c):
+                    emitente = c
+
+        # 6. NFS-e generica: Prestador de Servicos
         if not emitente:
             m = re.search(r'Prestador\s+de\s+Servicos\s*\n\s*([A-Z][^\n\r]{2,79})', texto, re.IGNORECASE)
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # 5. Label "Emitente:"
+        # 7. Label "Emitente:"
         if not emitente:
             m = re.search(r'Emitente\s*[:\s]+([^\n\r]{3,80})', texto, re.IGNORECASE)
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # 6. Razao Social generica
+        # 8. Razao Social generica (primeira ocorrencia)
         if not emitente:
             m = re.search(r'Razao\s+Social\s*[:\s]+([^\n\r]{3,80})', texto, re.IGNORECASE)
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # 7. Fallback: linha com sufixo empresarial
+        # 9. Fallback: linha com sufixo empresarial
         if not emitente:
             m = re.search(
                 r'\n([A-Z][A-Z0-9 &.,/\-]{2,60}(?:S\.A|LTDA|EIRELI|DISTRIBUIDORA|INDUSTRIA|CONSTRUTORA|COMERCIO|ENERGIA)\.?)\n',
                 texto
             )
-            if m:
-                c = m.group(1).strip()
-                if _valido(c):
-                    emitente = c
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
 
-        # ── Valor ──
+        # ── Valor Total ───────────────────────────────────────────────────
         for p in [
-            # Omie no topo: "VALOR TOTAL: R$ 87,04"
             r'VALOR\s+TOTAL:\s*R.\s*([\d.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s+([\d.,]+)',
-            r'Valor\s+Total\s+da\s+Nota\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+Total\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'TOTAL\s+GERAL\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+dos\s+Servicos\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+Total\s+da\s+Nota\s*[:\s]*R?.\s*([\d.,]+)',
+            r'Valor\s+Total\s*[:\s]*R?.\s*([\d.,]+)',
+            r'TOTAL\s+GERAL\s*[:\s]*R?.\s*([\d.,]+)',
+            r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
         ]:
             m = re.search(p, texto, re.IGNORECASE)
             if m:
@@ -278,14 +337,9 @@ def extrair_info_nota_fiscal(pdf_bytes):
         return None, None, None, None, None
 
 
-def limpar_nome(nome):
-    nome = re.sub(r'[<>:"/\\|?*]', '', nome)
-    return ' '.join(nome.split()).upper()
-
-
-def montar_nome(numero_nf, emitente):
-    return "NF {} - {}.PDF".format(numero_nf, emitente)
-
+# =============================================================================
+#  PROCESSAMENTO
+# =============================================================================
 
 def processar_pdfs(uploaded_files):
     resultados = []
@@ -299,9 +353,9 @@ def processar_pdfs(uploaded_files):
 
         data, emitente, tipo_nf, valor, numero_nf = extrair_info_nota_fiscal(pdf_bytes)
 
-        if (data or numero_nf) and emitente:
+        if numero_nf and emitente:
             emitente_limpo = limpar_nome(emitente)
-            novo_nome = montar_nome(numero_nf or data, emitente_limpo)
+            novo_nome = montar_nome(numero_nf, emitente_limpo)
             status = '✅ Sucesso'
         else:
             emitente_limpo = limpar_nome(emitente) if emitente else 'N/A'
@@ -309,14 +363,15 @@ def processar_pdfs(uploaded_files):
             status = '⚠️ Informações não encontradas'
 
         resultados.append({
-            'original': uf.name,
+            'original':  uf.name,
             'novo_nome': novo_nome,
-            'status': status,
-            'tipo': tipo_nf or 'Desconhecido',
-            'data': data or 'N/A',
-            'emitente': emitente_limpo,
-            'valor': valor,
-            '_bytes': pdf_bytes,
+            'status':    status,
+            'tipo':      tipo_nf or 'Desconhecido',
+            'numero_nf': numero_nf or 'N/A',
+            'data':      data or 'N/A',
+            'emitente':  emitente_limpo,
+            'valor':     valor,
+            '_bytes':    pdf_bytes,
         })
         arquivos_zip.append((novo_nome if novo_nome != '-' else uf.name, pdf_bytes))
         progress_bar.progress((idx + 1) / len(uploaded_files))
@@ -332,6 +387,10 @@ def processar_pdfs(uploaded_files):
             zf.writestr(nome, conteudo)
     return buf.getvalue(), resultados
 
+
+# =============================================================================
+#  METRICAS
+# =============================================================================
 
 def render_metricas(resultados):
     total = len(resultados)
@@ -349,6 +408,10 @@ def render_metricas(resultados):
     """.format(total=total, sucesso=sucesso, erros=erros, valor=valor_fmt), unsafe_allow_html=True)
 
 
+# =============================================================================
+#  INTERFACE PRINCIPAL
+# =============================================================================
+
 def main():
     st.set_page_config(page_title="Notas Fiscais | Rezende Energia", page_icon="🧾", layout="wide")
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -358,7 +421,7 @@ def main():
         <div class="hero-title">🧾 Renomeador de <span>Notas Fiscais</span></div>
         <div class="hero-subtitle">
             Processa notas fiscais em PDF e as renomeia automaticamente no padrao<br>
-            <strong style="color:#FFD39A;">Data de Emissao &mdash; Razao Social do Emitente (Fornecedor)</strong>
+            <strong style="color:#FFD39A;">NF [Numero] &mdash; Razao Social do Emitente (Fornecedor)</strong>
             &mdash; sempre em <strong style="color:#F7931E;">MAIUSCULAS</strong>.
         </div>
         <div class="hero-badges">
@@ -405,11 +468,12 @@ def main():
                 st.dataframe(df_display, use_container_width=True, hide_index=True,
                     column_config={
                         'original':  st.column_config.TextColumn('Nome Original'),
-                        'novo_nome': st.column_config.TextColumn('Novo Nome (MAIUSCULAS)'),
+                        'novo_nome': st.column_config.TextColumn('Novo Nome'),
                         'status':    st.column_config.TextColumn('Status'),
                         'tipo':      st.column_config.TextColumn('Tipo'),
+                        'numero_nf': st.column_config.TextColumn('Numero NF'),
                         'data':      st.column_config.TextColumn('Data de Emissao'),
-                        'emitente':  st.column_config.TextColumn('Emitente (MAIUSCULAS)'),
+                        'emitente':  st.column_config.TextColumn('Emitente'),
                         'valor':     st.column_config.NumberColumn('Valor Total', format="R$ %.2f"),
                     })
 
@@ -420,6 +484,7 @@ def main():
                 """, unsafe_allow_html=True)
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
                 if qtd == 1:
                     r = resultados[0]
                     nome_dl = r['novo_nome'] if r['novo_nome'] != '-' else r['original']
@@ -435,20 +500,20 @@ def main():
 
     with st.expander("ℹ️ Formato, Exemplos e Requisitos"):
         st.markdown("""
-        ### Formato do Nome - SEMPRE EM MAIUSCULAS
+        ### Formato do Nome
         ```
-        DD-MM-YYYY - RAZAO SOCIAL DO EMITENTE.PDF
+        NF [NUMERO] - RAZAO SOCIAL DO EMITENTE.PDF
         ```
         ### Exemplos
         | Antes | Depois |
         |---|---|
-        | `NF_202001_-_PMZ.pdf` | `19-03-2026 - PMZ DISTRIBUIDORA SA.PDF` |
-        | `nfse_marco.pdf` | `10-03-2025 - EMPRESA DE SERVICOS ME.PDF` |
+        | `NF_202001_-_PMZ.pdf` | `NF 202001 - PMZ DISTRIBUIDORA SA.PDF` |
+        | `152603...193.pdf` | `NF 6 - BERIT PECAS AUTOMOTIVAS LTDA ME.PDF` |
 
         ### Como usar
         1. Selecione um ou mais PDFs
         2. Clique em **Processar Notas Fiscais**
-        3. PDF unico → baixa o PDF ja renomeado | Varios → baixa ZIP
+        3. PDF unico: baixa o PDF ja renomeado | Varios: baixa ZIP
 
         ### Formatos suportados
         - NF-e DANFE (padrao SEFAZ) | NF-e **Omie** | NFS-e | CF-e/SAT
