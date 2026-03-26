@@ -179,6 +179,79 @@ def montar_nome(numero_nf, emitente):
 #  EXTRACAO DE DADOS DA NOTA FISCAL
 # =============================================================================
 
+def _extrair_emitente_por_bbox(pdf_bytes):
+    """
+    Para PDFs com texto colado (ex: DANFSe Santarem), usa extract_words com
+    x_tolerance=1 para separar caracteres individuais e reconstruir o nome.
+    Busca palavras na mesma linha Y que o label 'Nome/NomeEmpresarial' do EMITENTE.
+    """
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            page = pdf.pages[0]
+
+            # Localizar Y do label "Nome/NomeEmpresarial" do bloco EMITENTE
+            words_normal = page.extract_words(x_tolerance=3, y_tolerance=3)
+
+            emitente_y = None
+            tomador_y = None
+
+            for w in words_normal:
+                t = w['text'].upper()
+                if 'EMITENTEDANFS' in t or 'EMITENTE' in t:
+                    emitente_y = w['top']
+                if 'TOMADORDOSERVICO' in t or 'TOMADOR' in t:
+                    if emitente_y is not None:
+                        tomador_y = w['top']
+                        break
+                if 'NOME/NOMEEMPRESARIAL' in t and emitente_y is not None and tomador_y is None:
+                    nome_label_y = w['top']
+
+            if emitente_y is None:
+                return None
+
+            # Pegar todas as palavras com x_tolerance=1 (separa caracteres)
+            words_fine = page.extract_words(x_tolerance=1, y_tolerance=3)
+
+            # A linha do nome do emitente esta entre o label Nome/NomeEmpresarial
+            # e o bloco TOMADOR — pegar palavras com Y maior que o label e menor que tomador
+            # Na pratica: pegar palavras na faixa Y = [nome_label_y + 5, nome_label_y + 20]
+            # e x0 < 250 (coluna esquerda, antes do email)
+
+            # Encontrar Y exato do label Nome/NomeEmpresarial do emitente
+            nome_y = None
+            passou_emitente = False
+            passou_tomador = False
+            for w in words_normal:
+                t = w['text'].upper()
+                if 'EMITENTEDANFS' in t:
+                    passou_emitente = True
+                if passou_emitente and 'TOMADORDOSERVICO' in t:
+                    passou_tomador = True
+                    break
+                if passou_emitente and not passou_tomador and 'NOME/NOMEEMPRESARIAL' in t:
+                    nome_y = w['top']
+                    break
+
+            if nome_y is None:
+                return None
+
+            # Pegar palavras na linha abaixo do label (nome_y + 5 a +18)
+            # e na coluna esquerda (x0 < 280, antes do email)
+            nome_words = [
+                w['text'] for w in words_fine
+                if nome_y + 4 <= w['top'] <= nome_y + 18
+                and w['x0'] < 280
+                and not re.match(r'^[\d./@-]+$', w['text'])  # ignorar email/cnpj
+            ]
+
+            if nome_words:
+                return ' '.join(nome_words)
+
+    except Exception:
+        pass
+    return None
+
+
 def extrair_info_nota_fiscal(pdf_bytes):
     """
     Extrai numero, emitente, tipo, data e valor de um PDF de NF.
@@ -257,16 +330,21 @@ def extrair_info_nota_fiscal(pdf_bytes):
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 4. DANFSe Santarem: "EMITENTEDANFS-e ... Nome/NomeEmpresarial\nNOME email"
-        if not emitente:
-            m = re.search(
-                r'EMITENTEDANFS-e.*?Nome/NomeEmpresarial[^\n]*\n([^\n]{3,80})',
-                texto, re.IGNORECASE | re.DOTALL
-            )
-            if m:
-                c = re.split(r'\s+\S+@\S+', m.group(1))[0].strip()
-                if candidato_valido(c):
-                    emitente = c
+        # 4. DANFSe Santarem: usar bbox para separar texto colado
+        if not emitente and "DANFSE" in texto_up or "DANFSEV" in texto_up:
+            c = _extrair_emitente_por_bbox(pdf_bytes)
+            if c and candidato_valido(c):
+                emitente = c
+            else:
+                # Fallback: pegar via regex e aceitar colado
+                m = re.search(
+                    r'EMITENTEDANFS-e.*?Nome/NomeEmpresarial[^\n]*\n([^\n]{3,80})',
+                    texto, re.IGNORECASE | re.DOTALL
+                )
+                if m:
+                    c = re.split(r'\s+\S+@\S+', m.group(1))[0].strip()
+                    if candidato_valido(c):
+                        emitente = c
 
         # 5. NFSe Belem/outras prefeituras: "EMITENTE PRESTADOR DO SERVICO ... Nome / Nome Empresarial\nNOME email"
         if not emitente:
