@@ -179,6 +179,11 @@ def montar_nome(numero_nf, emitente):
 #  EXTRACAO DE DADOS DA NOTA FISCAL
 # =============================================================================
 
+def _ascii(txt):
+    """Helper interno: remove acentos e converte para ASCII."""
+    return unicodedata.normalize('NFKD', txt).encode('ascii', 'ignore').decode('ascii')
+
+
 def _extrair_emitente_por_bbox(pdf_bytes):
     """
     Extrai o nome do emitente usando posicao (bbox) com x_tolerance=1.
@@ -257,10 +262,74 @@ def _extrair_emitente_por_bbox(pdf_bytes):
     return None
 
 
+def _extrair_tomador_por_bbox(pdf_bytes):
+    """
+    Extrai o nome do tomador usando posição (bbox).
+    Busca a seção TOMADOR DE SERVIÇOS / DESTINATÁRIO e coleta o nome logo abaixo.
+    """
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            page = pdf.pages[0]
+            words = page.extract_words(x_tolerance=1, y_tolerance=3)
+
+        def achar_y_subsequencia(words_list, palavras, y_min=0, y_max=9999):
+            linhas = {}
+            for w in words_list:
+                if not (y_min <= w['top'] <= y_max):
+                    continue
+                y_key = round(w['top'], 0)
+                linhas.setdefault(y_key, []).append(_ascii(w['text']).upper())
+            for y_key in sorted(linhas.keys()):
+                tokens = ' '.join(linhas[y_key])
+                if all(p in tokens for p in palavras):
+                    return float(y_key)
+            return None
+
+        def palavras_na_linha(words_list, y_ref, y_offset_min=3, y_offset_max=22, x_max=420):
+            resultado = []
+            for w in words_list:
+                if y_ref + y_offset_min <= w['top'] <= y_ref + y_offset_max and w['x0'] < x_max:
+                    t = _ascii(w['text'])
+                    if '@' in t:
+                        break
+                    if re.match(r'^\d{2}\.\d{3}', t):
+                        break
+                    if re.match(r'^[\d./@\-()+]+$', t):
+                        continue
+                    resultado.append(t)
+            return resultado
+
+        # Blocos possíveis para achar o tomador
+        blocos_tomador = [
+            # NFSe prefeituras: "TOMADOR DE SERVIÇOS" -> "Nome/Razão"
+            (['TOMADOR'], None, ['NOME', 'RAZAO']),
+            # NF-e DANFE / Omie: "DESTINATÁRIO" -> "NOME/RAZÃO SOCIAL"
+            (['DESTINATARIO'], None, ['NOME', 'RAZAO']),
+            (['DESTINATARIO'], None, ['RAZAO', 'SOCIAL']),
+        ]
+
+        for palavras_inicio, palavras_fim, palavras_label in blocos_tomador:
+            y_inicio = achar_y_subsequencia(words, palavras_inicio)
+            if y_inicio is None:
+                continue
+            y_fim = (achar_y_subsequencia(words, palavras_fim, y_min=y_inicio + 5) or 9999) if palavras_fim else 9999
+            y_label = achar_y_subsequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
+            if y_label is None:
+                continue
+            nome_words = palavras_na_linha(words, y_label, x_max=500)
+            if nome_words:
+                nome = ' '.join(nome_words).strip()
+                if nome and len(nome) >= 3:
+                    return nome
+    except Exception:
+        pass
+    return None
+
+
 def extrair_info_nota_fiscal(pdf_bytes):
     """
-    Extrai numero, emitente, tipo, data e valor de um PDF de NF.
-    Retorna: (data, emitente, tipo_nf, valor, numero_nf)
+    Extrai numero, emitente, tomador, tipo, data e valor de um PDF de NF.
+    Retorna: (data, emitente, tipo_nf, valor, numero_nf, tomador)
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -271,7 +340,7 @@ def extrair_info_nota_fiscal(pdf_bytes):
                     texto_raw += t + "\n"
 
         if not texto_raw.strip():
-            return None, None, None, None, None
+            return None, None, None, None, None, None
 
         # Trabalhar com texto ASCII (sem acentos) para facilitar regex
         texto = ascii_normalizar(texto_raw)
@@ -279,6 +348,7 @@ def extrair_info_nota_fiscal(pdf_bytes):
 
         data = None
         emitente = None
+        tomador = None
         tipo_nf = None
         valor = None
         numero_nf = None
@@ -418,18 +488,41 @@ def extrair_info_nota_fiscal(pdf_bytes):
                 except ValueError:
                     continue
 
-        return data, emitente, tipo_nf, valor, numero_nf
+        # ── Tomador (quem recebeu o serviço) ──────────────────────────────
+        tomador_bbox = _extrair_tomador_por_bbox(pdf_bytes)
+        if tomador_bbox and candidato_valido(tomador_bbox):
+            tomador = tomador_bbox
+
+        # Fallback regex para tomador
+        if not tomador:
+            for p in [
+                r'Tomador\s+de\s+Servicos\s*\n\s*([A-Z][^\n\r]{2,79})',
+                r'TOMADOR\s+DE\s+SERVICOS[^\n]*\n[^\n]*\n([A-Z][^\n\r]{2,79})',
+                r'DESTINATARIO[^\n]*\n([A-Z][^\n\r]{2,79})',
+            ]:
+                m = re.search(p, texto, re.IGNORECASE)
+                if m and candidato_valido(m.group(1)):
+                    tomador = m.group(1).strip()
+                    break
+
+        # Fallback: Nome/Razão após "TOMADOR"
+        if not tomador:
+            m = re.search(r'Nome/Razao[^\n]*\n([A-Z][^\n\r]{2,79})', texto, re.IGNORECASE)
+            if m and candidato_valido(m.group(1)):
+                tomador = m.group(1).strip()
+
+        return data, emitente, tipo_nf, valor, numero_nf, tomador
 
     except Exception as e:
         st.error("Erro ao processar PDF: {}".format(str(e)))
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
 
 # =============================================================================
 #  PROCESSAMENTO
 # =============================================================================
 
-def processar_pdfs(uploaded_files):
+def processar_pdfs(uploaded_files, modo='emitente'):
     resultados = []
     arquivos_zip = []
     progress_bar = st.progress(0)
@@ -439,16 +532,22 @@ def processar_pdfs(uploaded_files):
         status_text.text("Processando {}...".format(uf.name))
         pdf_bytes = uf.read()
 
-        data, emitente, tipo_nf, valor, numero_nf = extrair_info_nota_fiscal(pdf_bytes)
+        data, emitente, tipo_nf, valor, numero_nf, tomador = extrair_info_nota_fiscal(pdf_bytes)
 
-        if numero_nf and emitente:
-            emitente_limpo = limpar_nome(emitente)
-            novo_nome = montar_nome(numero_nf, emitente_limpo)
+        # Escolhe quem usar para nomear
+        razao_escolhida = tomador if modo == 'tomador' else emitente
+
+        if numero_nf and razao_escolhida:
+            razao_limpa = limpar_nome(razao_escolhida)
+            novo_nome = montar_nome(numero_nf, razao_limpa)
             status = '✅ Sucesso'
         else:
-            emitente_limpo = limpar_nome(emitente) if emitente else 'N/A'
+            razao_limpa = limpar_nome(razao_escolhida) if razao_escolhida else 'N/A'
             novo_nome = '-'
             status = '⚠️ Informações não encontradas'
+
+        emitente_limpo = limpar_nome(emitente) if emitente else 'N/A'
+        tomador_limpo  = limpar_nome(tomador)  if tomador  else 'N/A'
 
         resultados.append({
             'original':  uf.name,
@@ -458,6 +557,7 @@ def processar_pdfs(uploaded_files):
             'numero_nf': numero_nf or 'N/A',
             'data':      data or 'N/A',
             'emitente':  emitente_limpo,
+            'tomador':   tomador_limpo,
             'valor':     valor,
             '_bytes':    pdf_bytes,
         })
@@ -509,8 +609,8 @@ def main():
         <div class="hero-title">🧾 Renomeador de <span>Notas Fiscais</span></div>
         <div class="hero-subtitle">
             Processa notas fiscais em PDF e as renomeia automaticamente no padrao<br>
-            <strong style="color:#FFD39A;">NF [Numero] &mdash; Razao Social do Emitente (Fornecedor)</strong>
-            &mdash; sempre em <strong style="color:#F7931E;">MAIUSCULAS</strong>.
+            <strong style="color:#FFD39A;">NF [Numero] &mdash; Razao Social</strong>
+            &mdash; escolha entre <strong style="color:#F7931E;">Emitente/Prestador</strong> ou <strong style="color:#F7931E;">Tomador/Destinatário</strong>.
         </div>
         <div class="hero-badges">
             <span class="badge">📄 NF-e DANFE</span>
@@ -539,14 +639,30 @@ def main():
         qtd = len(uploaded_files)
         st.success("✅ {} arquivo(s) carregado(s)".format(qtd))
 
+        st.markdown("""
+        <div class="section-label"><span>02</span> Modo de Renomeação</div>
+        <div class="section-title">Escolha qual razão social usar no nome do arquivo</div>
+        """, unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            modo_emitente = st.radio(
+                "Usar como nome:",
+                options=["emitente", "tomador"],
+                format_func=lambda x: "🏭 Emitente / Prestador (quem emitiu a NF)" if x == "emitente" else "🏢 Tomador / Destinatário (quem recebeu)",
+                index=0,
+                label_visibility="collapsed"
+            )
+        modo = modo_emitente
+
         if st.button("🚀 Processar Notas Fiscais", type="primary", use_container_width=True):
             with st.spinner("Processando notas fiscais..."):
-                zip_output, resultados = processar_pdfs(uploaded_files)
+                zip_output, resultados = processar_pdfs(uploaded_files, modo=modo)
 
             if resultados:
                 st.divider()
                 st.markdown("""
-                <div class="section-label"><span>02</span> Resultados</div>
+                <div class="section-label"><span>03</span> Resultados</div>
                 <div class="section-title">Resumo do Processamento</div>
                 """, unsafe_allow_html=True)
 
@@ -561,13 +677,14 @@ def main():
                         'tipo':      st.column_config.TextColumn('Tipo'),
                         'numero_nf': st.column_config.TextColumn('Numero NF'),
                         'data':      st.column_config.TextColumn('Data de Emissao'),
-                        'emitente':  st.column_config.TextColumn('Emitente'),
+                        'emitente':  st.column_config.TextColumn('Emitente / Prestador'),
+                        'tomador':   st.column_config.TextColumn('Tomador / Destinatário'),
                         'valor':     st.column_config.NumberColumn('Valor Total', format="R$ %.2f"),
                     })
 
                 st.divider()
                 st.markdown("""
-                <div class="section-label"><span>03</span> Download</div>
+                <div class="section-label"><span>04</span> Download</div>
                 <div class="section-title">Baixar Arquivos Renomeados</div>
                 """, unsafe_allow_html=True)
 
