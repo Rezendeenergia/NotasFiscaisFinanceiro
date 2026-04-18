@@ -115,7 +115,8 @@ def candidato_valido(c):
     lixo = ['AVENIDA', 'RUA ', 'CEP', 'CNPJ', 'CPF', 'FONE', 'BAIRRO', 'MUNICIPIO',
             'DOCUMENTO', 'AUXILIAR', 'ELETRONICA', 'ENTRADA', 'SAIDA', 'FOLHA',
             'NATUREZA', 'PROTOCOLO', 'INSCRICAO', 'VENDA', 'RECEBEMOS', 'RECEBI',
-            'DANFE', 'ABAIXO', 'SERIE']
+            'DANFE', 'ABAIXO', 'SERIE', 'ENDERECO', 'E-MAIL', 'EMAIL',
+            'TV ', 'QD.', 'QUADRA', 'LOTE', 'TRAVESSA', 'ALAMEDA']
     cu = ascii_normalizar(c).upper()
     return not any(cu.startswith(l) for l in lixo)
 
@@ -270,63 +271,104 @@ def _extrair_emitente_por_bbox(pdf_bytes):
 
 def _extrair_tomador_por_bbox(pdf_bytes):
     """
-    Extrai o nome do tomador usando posição (bbox).
-    Busca a seção TOMADOR DE SERVIÇOS / DESTINATÁRIO e coleta o nome logo abaixo.
+    Extrai o nome do tomador/destinatario usando posicao (bbox).
+    Suporta dois padroes:
+      - Label inline: "Nome/Razao: EMPRESA LTDA" (nome na mesma linha do label)
+      - Label separado: "Nome/Razao Social\nEMPRESA LTDA" (nome na linha seguinte)
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             page = pdf.pages[0]
             words = page.extract_words(x_tolerance=1, y_tolerance=3)
 
-        def achar_y_subsequencia(words_list, palavras, y_min=0, y_max=9999):
+        # Agrupar palavras por linha (Y arredondado)
+        def agrupar_linhas(words_list, y_min=0, y_max=9999):
             linhas = {}
             for w in words_list:
                 if not (y_min <= w['top'] <= y_max):
                     continue
                 y_key = round(w['top'], 0)
-                linhas.setdefault(y_key, []).append(_ascii(w['text']).upper())
-            for y_key in sorted(linhas.keys()):
-                tokens = ' '.join(linhas[y_key])
+                linhas.setdefault(y_key, []).append(w)
+            return dict(sorted(linhas.items()))
+
+        def achar_y_bloco(linhas_dict, palavras):
+            """Acha Y da linha que contem todas as palavras-chave."""
+            for y_key, ws in linhas_dict.items():
+                tokens = ' '.join(_ascii(w['text']).upper() for w in ws)
                 if all(p in tokens for p in palavras):
                     return float(y_key)
             return None
 
-        def palavras_na_linha(words_list, y_ref, y_offset_min=3, y_offset_max=22, x_max=420):
+        def nome_apos_label(linhas_dict, y_label, x_label_max=90, y_fim=9999):
+            """
+            Pega o nome que esta apos o label 'Nome/Razao:' na MESMA linha.
+            Retorna as palavras com x > x_label_max na linha y_label.
+            """
+            y_key = round(y_label, 0)
+            if y_key not in linhas_dict:
+                return []
             resultado = []
-            for w in words_list:
-                if y_ref + y_offset_min <= w['top'] <= y_ref + y_offset_max and w['x0'] < x_max:
+            for w in linhas_dict[y_key]:
+                if w['x0'] > x_label_max:
                     t = _ascii(w['text'])
-                    if '@' in t:
-                        break
-                    if re.match(r'^\d{2}\.\d{3}', t):
-                        break
-                    if re.match(r'^[\d./@\-()+]+$', t):
-                        continue
+                    if '@' in t: break
+                    if re.match(r'^[\d./@\-()+:]+$', t): continue
                     resultado.append(t)
             return resultado
 
-        # Blocos possíveis para achar o tomador
-        blocos_tomador = [
-            # NFSe prefeituras: "TOMADOR DE SERVIÇOS" -> "Nome/Razão"
-            (['TOMADOR'], None, ['NOME', 'RAZAO']),
-            # NF-e DANFE / Omie: "DESTINATÁRIO" -> "NOME/RAZÃO SOCIAL"
-            (['DESTINATARIO'], None, ['NOME', 'RAZAO']),
-            (['DESTINATARIO'], None, ['RAZAO', 'SOCIAL']),
+        def nome_linha_seguinte(linhas_dict, y_label, y_fim=9999, x_max=450):
+            """Pega palavras na linha imediatamente apos y_label."""
+            ys = sorted(k for k in linhas_dict if k > y_label + 2 and k < y_fim)
+            if not ys:
+                return []
+            y_next = ys[0]
+            resultado = []
+            for w in linhas_dict[y_next]:
+                if w['x0'] < x_max:
+                    t = _ascii(w['text'])
+                    if '@' in t: break
+                    if re.match(r'^\d{2}\.\d{3}', t): break
+                    if re.match(r'^[\d./@\-()+:]+$', t): continue
+                    resultado.append(t)
+            return resultado
+
+        linhas = agrupar_linhas(words)
+
+        # Blocos a tentar: (palavras_inicio_bloco, palavras_label_nome)
+        blocos = [
+            # Goianesia/prefeituras: "TOMADOR DE SERVICOS" -> "Nome/Razao:" inline
+            (['TOMADOR'], ['NOME', 'RAZAO']),
+            # NF-e DANFE/Omie: "DESTINATARIO" -> "NOME/RAZAO SOCIAL" ou "RAZAO SOCIAL"
+            (['DESTINATARIO'], ['NOME', 'RAZAO']),
+            (['DESTINATARIO'], ['RAZAO', 'SOCIAL']),
+            # NFSe prefeituras Belem: "TOMADOR DO SERVICO" -> "Nome / Nome Empresarial"
+            (['TOMADOR'], ['NOME', 'EMPRESARIAL']),
         ]
 
-        for palavras_inicio, palavras_fim, palavras_label in blocos_tomador:
-            y_inicio = achar_y_subsequencia(words, palavras_inicio)
-            if y_inicio is None:
+        for palavras_bloco, palavras_label in blocos:
+            y_bloco = achar_y_bloco(linhas, palavras_bloco)
+            if y_bloco is None:
                 continue
-            y_fim = (achar_y_subsequencia(words, palavras_fim, y_min=y_inicio + 5) or 9999) if palavras_fim else 9999
-            y_label = achar_y_subsequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
+
+            y_label = achar_y_bloco(
+                {k: v for k, v in linhas.items() if k > y_bloco + 2},
+                palavras_label
+            )
             if y_label is None:
                 continue
-            nome_words = palavras_na_linha(words, y_label, x_max=500)
+
+            # Tentar primeiro: nome na MESMA linha do label (apos x=80)
+            nome_words = nome_apos_label(linhas, y_label, x_label_max=80)
+
+            # Se nao achou na mesma linha, tentar linha seguinte
+            if not nome_words:
+                nome_words = nome_linha_seguinte(linhas, y_label)
+
             if nome_words:
                 nome = ' '.join(nome_words).strip()
-                if nome and len(nome) >= 3:
+                if nome and len(nome) >= 3 and candidato_valido(nome):
                     return nome
+
     except Exception:
         pass
     return None
