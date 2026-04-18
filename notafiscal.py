@@ -153,7 +153,13 @@ def extrair_numero_nf(texto):
         try: return str(int(raw))
         except ValueError: pass
 
-    # 5. Fallback: No/N. numero curto (max 9 digitos, evita chave de acesso)
+    # 5. Goianesia NFS-e: "No 416 / PAGINA"
+    m = re.search(r'(?:^|\n)\s*No\s+(\d+)\s*\n\s*(?:PAGINA|NF-e\s+Emitida)', texto, re.IGNORECASE | re.MULTILINE)
+    if m:
+        try: return str(int(m.group(1)))
+        except ValueError: pass
+
+    # 6. Fallback: No/N. numero curto (max 9 digitos, evita chave de acesso)
     m = re.search(r'N[o.]+\s*([\d.]{1,12})(?:\s|$)', texto, re.IGNORECASE | re.MULTILINE)
     if m:
         raw = m.group(1).replace('.', '').replace(' ', '')
@@ -354,10 +360,11 @@ def extrair_info_nota_fiscal(pdf_bytes):
         numero_nf = None
 
         # ── Tipo ──────────────────────────────────────────────────────────
-        if "DANFE" in texto_up or "DOCUMENTO AUXILIAR DA NOTA FISCAL" in texto_up:
-            tipo_nf = "NF-e"
-        elif "NOTA FISCAL DE SERVI" in texto_up or "NFS-E" in texto_up:
+        # NFS-e tem prioridade sobre NF-e pois alguns PDFs tem os dois termos
+        if "NFS-E" in texto_up or "NOTA FISCAL DE SERVICO" in texto_up or "NOTA FISCAL DE SERVI" in texto_up or "DANFSE" in texto_up:
             tipo_nf = "NFS-e"
+        elif "DANFE" in texto_up or "DOCUMENTO AUXILIAR DA NOTA FISCAL" in texto_up:
+            tipo_nf = "NF-e"
         elif "NOTA FISCAL" in texto_up:
             tipo_nf = "NF"
         elif "CUPOM FISCAL" in texto_up or "CF-E" in texto_up:
@@ -372,6 +379,10 @@ def extrair_info_nota_fiscal(pdf_bytes):
         for p in [
             r'EMISSAO:\s*(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'DATA\s+DA\s+EMISSAO\s+(\d{2}[/\-]\d{2}[/\-]\d{4})',
+            # Goianesia: "NF-e Emitida em: 11/12/2025"
+            r'NF-e\s+Emitida\s+em:\s*(\d{2}[/\-]\d{2}[/\-]\d{4})',
+            # Goianesia: "Data emissao 11/12/2025"
+            r'Data\s+emissao\s+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'EMISSAO\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'Data\s+de\s+Competencia\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'(\d{4}-\d{2}-\d{2})',
@@ -389,7 +400,14 @@ def extrair_info_nota_fiscal(pdf_bytes):
         if emitente_bbox and candidato_valido(emitente_bbox):
             emitente = emitente_bbox
 
-        # 1. Omie: "RECEBEMOS DE [EMPRESA] OS PRODUTOS"
+        # 1. Goianesia NFS-e: TOMADOR DE SERVICOS + Nome/Razao = emitente real
+        # Neste layout Rezende e o PRESTADOR, e o fornecedor e o TOMADOR
+        if not emitente:
+            m = re.search(r'TOMADOR\s+DE\s+SERVICOS.*?Nome/Razao:\s*([^\n]+)', texto, re.IGNORECASE | re.DOTALL)
+            if m and candidato_valido(m.group(1)):
+                emitente = m.group(1).strip()
+
+        # 1b. Omie: "RECEBEMOS DE [EMPRESA] OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
@@ -471,6 +489,10 @@ def extrair_info_nota_fiscal(pdf_bytes):
             r'Valor\s+Total\s+da\s+Nota\s*[:\s]*R?.\s*([\d.,]+)',
             r'Valor\s+Total\s*[:\s]*R?.\s*([\d.,]+)',
             r'TOTAL\s+GERAL\s*[:\s]*R?.\s*([\d.,]+)',
+            # Goianesia: "=) Valor liquido R$ 960,00"
+            r'=\)\s*Valor\s+liquido\s+R\$\s*([\d.,]+)',
+            # Goianesia: "Valor da nota R$ 960,00"
+            r'Valor\s+da\s+nota\s+R\$\s*([\d.,]+)',
             r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
         ]:
             m = re.search(p, texto, re.IGNORECASE)
