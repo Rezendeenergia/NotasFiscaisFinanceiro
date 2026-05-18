@@ -630,6 +630,25 @@ def processar_pdfs(uploaded_files, modo='emitente'):
 
     status_text.text("✅ Processamento concluído!")
 
+    # Resolve nomes duplicados: atualiza resultados E arquivos_zip juntos
+    def dedup_nome(nome, contador):
+        if nome not in contador:
+            contador[nome] = 1
+            return nome
+        else:
+            contador[nome] += 1
+            base, ext = (nome.rsplit('.', 1) if '.' in nome else (nome, ''))
+            return "{} ({}).{}".format(base, contador[nome], ext) if ext else "{} ({})".format(base, contador[nome])
+
+    nomes_counter = {}
+    for i in range(len(resultados)):
+        nome_orig = resultados[i]['novo_nome']
+        if nome_orig == '-':
+            continue
+        nome_final = dedup_nome(nome_orig, nomes_counter)
+        resultados[i]['novo_nome'] = nome_final
+        arquivos_zip[i] = (nome_final, arquivos_zip[i][1])
+
     if len(uploaded_files) == 1:
         return None, resultados
 
