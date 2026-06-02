@@ -501,39 +501,58 @@ def extrair_info_nota_fiscal(pdf_bytes):
                 emitente = m.group(1).strip()
 
         # ── Valor Total ───────────────────────────────────────────────────
-        for p in [
+        # Helper para normalizar string de valor BR para float
+        def _parse_valor(s):
+            s = s.strip()
+            # Formato BR: 1.234,56
+            if re.search(r'\d{1,3}(?:\.\d{3})+,\d{2}$', s):
+                return float(s.replace('.', '').replace(',', '.'))
+            # Formato US: 1,234.56
+            if re.search(r'\d{1,3}(?:,\d{3})+\.\d{2}$', s):
+                return float(s.replace(',', ''))
+            # Sem separador de milhar: 960,00 ou 960.00
+            return float(s.replace(',', '.'))
+
+        # Padroes em ordem de PRIORIDADE — do mais especifico ao mais generico.
+        # Cada padrao retorna (valor_str, requer_parse).
+        # A logica: primeiro tenta padroes de "valor final/liquido" para
+        # evitar pegar valores parciais que aparecem antes no texto.
+        padroes_valor = [
+            # --- DANFSe Santarem COLADO: "ValorLiquidodaNFS-e" numa linha, "R$400,00" na proxima
+            r'Valor\s*L[i\xed]quido\s*da\s*NFS-?e[^\n]*\n[^\n]*R\$\s*([\d.,]+)',
+            # --- DANFSe Santarem com espacos: secao "VALOR TOTAL DA NFS-E" -> linha com R$
+            r'Valor\s+Liquido\s+da\s+NFS-?e\s*\n\s*R\$\s*([\d.,]+)',
+            # --- NFSe Belem (SESI/SENAI): tabela "Valor Liquido da NFSe (R$)\n5.376,00"
+            r'Valor\s+Liquido\s+da\s+NFSe\s*\(R\$\)\s*\n([\d.,]+)',
+            # --- Goianesia: rodape "Valor da nota\n960,00" (sem R$)
+            r'Valor\s+da\s+nota\s*\n([\d.,]+)',
+            # --- Goianesia alternativo: "=) Valor liquido\nR$ 960,00"
+            r'=\)\s*Valor\s+liquido\s*\n\s*R\$\s*([\d.,]+)',
+            # --- Goianesia inline: "(=) Valor liquido R$ 960,00"
+            r'=\)\s*Valor\s+liquido\s+R\$\s*([\d.,]+)',
+            # --- NF-e DANFE padrao SEFAZ
             r'VALOR\s+TOTAL:\s*R.\s*([\d.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s+([\d.,]+)',
             r'Valor\s+Total\s+da\s+Nota\s*[:\s]*R?.\s*([\d.,]+)',
-            r'Valor\s+Total\s*[:\s]*R?.\s*([\d.,]+)',
-            r'TOTAL\s+GERAL\s*[:\s]*R?.\s*([\d.,]+)',
-            r'=\)\s*Valor\s+liquido\s+R\$\s*([\d.,]+)',
-            r'Valor\s+da\s+nota\s+R\$\s*([\d.,]+)',
-            r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
-            # NFS-e SESC/SENAI/SESI e prefeituras
+            # --- NFSe generica: "Valor Liquido" inline
+            r'Valor\s+Liquido\s+da\s+NFS-?e\s*[:\s]*R?\$?\s*([\d.,]+)',
             r'Valor\s+Liquido\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+Bruto\s+dos\s+Servicos\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+Bruto\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+do\s+Servico\s*[:\s]*R?\$?\s*([\d.,]+)',
-            r'Valor\s+NFS-?e\s*[:\s]*R?\$?\s*([\d.,]+)',
+            # --- Outros
+            r'TOTAL\s+GERAL\s*[:\s]*R?.\s*([\d.,]+)',
+            r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
+            r'Valor\s+Total\s*[:\s]*R?.\s*([\d.,]+)',
             r'Valor\s+da\s+NFS-?e\s*[:\s]*R?\$?\s*([\d.,]+)',
-            # Padrao generico: linha com valor apos label
-            r'(?:Total|Liquido|Bruto|Servico)[^\n]{0,40}\n\s*R\$\s*([\d.,]+)',
-            r'(?<!\d)R\$\s*([\d.,]+)',
-        ]:
-            m = re.search(p, texto, re.IGNORECASE)
+        ]
+
+        for p in padroes_valor:
+            m = re.search(p, texto_raw, re.IGNORECASE)  # usa texto_raw para preservar \n reais
+            if not m:
+                m = re.search(p, texto, re.IGNORECASE)
             if m:
-                v = m.group(1).strip()
-                if re.search(r'\d{1,3}(?:\.\d{3})+,\d{2}$', v):
-                    v = v.replace('.', '').replace(',', '.')
-                elif re.search(r'\d{1,3}(?:,\d{3})+\.\d{2}$', v):
-                    v = v.replace(',', '')
-                else:
-                    v = v.replace(',', '.')
                 try:
-                    valor = float(v)
+                    valor = _parse_valor(m.group(1))
                     break
-                except ValueError:
+                except (ValueError, AttributeError):
                     continue
 
         # ── Tomador ───────────────────────────────────────────────────────
