@@ -510,6 +510,16 @@ def extrair_info_nota_fiscal(pdf_bytes):
             r'=\)\s*Valor\s+liquido\s+R\$\s*([\d.,]+)',
             r'Valor\s+da\s+nota\s+R\$\s*([\d.,]+)',
             r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
+            # NFS-e SESC/SENAI/SESI e prefeituras
+            r'Valor\s+Liquido\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+Bruto\s+dos\s+Servicos\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+Bruto\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+do\s+Servico\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+NFS-?e\s*[:\s]*R?\$?\s*([\d.,]+)',
+            r'Valor\s+da\s+NFS-?e\s*[:\s]*R?\$?\s*([\d.,]+)',
+            # Padrao generico: linha com valor apos label
+            r'(?:Total|Liquido|Bruto|Servico)[^\n]{0,40}\n\s*R\$\s*([\d.,]+)',
+            r'(?<!\d)R\$\s*([\d.,]+)',
         ]:
             m = re.search(p, texto, re.IGNORECASE)
             if m:
@@ -558,40 +568,43 @@ def extrair_info_nota_fiscal(pdf_bytes):
 #  DETECÇÃO DE DUPLICATAS
 # =============================================================================
 
-def chave_duplicata(r):
-    """
-    Gera uma chave de comparação para detectar duplicatas reais.
-    Usa: numero_nf + fornecedor_utilizado + data + valor (arredondado).
-    """
-    num = (r.get('numero_nf') or '').strip().upper()
-    fornecedor = (r.get('fornecedor_usado') or '').strip().upper()
-    data = (r.get('data') or '').strip()
-    # Arredonda valor para 2 casas para evitar falsos negativos por float
-    valor = r.get('valor')
-    valor_key = "{:.4f}".format(valor) if valor is not None else 'N/A'
-    return (num, fornecedor, data, valor_key)
-
-
 def detectar_duplicatas(resultados):
     """
-    Analisa a lista de resultados e retorna:
-      - grupos_dup: lista de listas de índices que são duplicatas entre si
-      - indices_dup: set de todos os índices que fazem parte de algum grupo duplicado
-    Um documento é considerado duplicata quando NF + fornecedor + data + valor coincidem.
-    Ignora documentos onde algum campo-chave está ausente (N/A).
+    Detecta grupos de possiveis duplicatas.
+    Criterios obrigatorios: mesmo numero NF + mesmo fornecedor + mesma data.
+    Valor: usado como refinamento apenas quando extraido em todos os documentos
+    do grupo; se algum nao tem valor, agrupa sem comparar valor.
+    Ignora documentos sem numero ou sem fornecedor identificado.
     """
     from collections import defaultdict
-    chaves = {}
+
     grupos_por_chave = defaultdict(list)
-
     for i, r in enumerate(resultados):
-        chave = chave_duplicata(r)
-        # Só detecta duplicata se tiver pelo menos número e fornecedor
-        if chave[0] == '' or chave[0] == 'N/A' or chave[1] == '' or chave[1] == 'N/A':
+        num = (r.get('numero_nf') or '').strip().upper()
+        fornecedor = (r.get('fornecedor_usado') or '').strip().upper()
+        data = (r.get('data') or '').strip()
+        if not num or num == 'N/A' or not fornecedor or fornecedor == 'N/A':
             continue
-        grupos_por_chave[chave].append(i)
+        grupos_por_chave[(num, fornecedor, data)].append(i)
 
-    grupos_dup = [indices for indices in grupos_por_chave.values() if len(indices) > 1]
+    grupos_dup = []
+    for chave, indices in grupos_por_chave.items():
+        if len(indices) < 2:
+            continue
+        # Sub-agrupa por valor quando TODOS do grupo tem valor extraido
+        todos_tem_valor = all(resultados[i].get('valor') is not None for i in indices)
+        if todos_tem_valor:
+            from collections import defaultdict as dd2
+            subgrupos = dd2(list)
+            for i in indices:
+                subgrupos["{:.4f}".format(resultados[i]['valor'])].append(i)
+            for subgrupo in subgrupos.values():
+                if len(subgrupo) >= 2:
+                    grupos_dup.append(subgrupo)
+        else:
+            # Algum sem valor: nao da pra refinar, considera todos duplicata
+            grupos_dup.append(indices)
+
     indices_dup = set(i for grupo in grupos_dup for i in grupo)
     return grupos_dup, indices_dup
 
