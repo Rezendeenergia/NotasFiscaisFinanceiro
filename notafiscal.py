@@ -13,8 +13,9 @@ CUSTOM_CSS = """
     --laranja: #F7931E; --laranja-vivo: #FF8C00; --laranja-suave: #FFF4E8;
     --laranja-borda: #FFD39A; --cinza-claro: #F4F4F8; --cinza-borda: #E0E0EB;
     --branco: #FFFFFF; --texto: #1C1C2E; --texto-leve: #6B6B8A;
-    --sucesso: #1DB954; --erro: #E53E3E; --radius: 12px;
+    --sucesso: #1DB954; --erro: #E53E3E; --aviso: #F59E0B; --radius: 12px;
     --shadow: 0 4px 24px rgba(247,147,30,0.10);
+    --dup-bg: #FFF8F0; --dup-borda: #FBBF24;
 }
 html, body, [class*="css"] { font-family: 'Sora', sans-serif !important; }
 .main .block-container { padding: 2rem 3rem 3rem 3rem; max-width: 1100px; }
@@ -36,18 +37,45 @@ html, body, [class*="css"] { font-family: 'Sora', sans-serif !important; }
 .section-label { display:flex; align-items:center; gap:.5rem; font-size:.8rem; font-weight:700;
     color:var(--laranja-vivo); letter-spacing:1.2px; text-transform:uppercase; margin-bottom:.6rem; }
 .section-title { font-size:1.15rem; font-weight:600; color:var(--texto); margin:0 0 1rem 0; }
-.metrics-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; margin:1.2rem 0; }
+.metrics-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:1rem; margin:1.2rem 0; }
 .metric-card { background:var(--branco); border:1px solid var(--cinza-borda); border-radius:var(--radius);
     padding:1.2rem 1.4rem; text-align:center; transition:all .25s; position:relative; overflow:hidden; }
 .metric-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px;
     background:linear-gradient(90deg,var(--laranja),var(--laranja-vivo)); border-radius:var(--radius) var(--radius) 0 0; }
+.metric-card.aviso::before { background:linear-gradient(90deg,var(--aviso),#F97316); }
 .metric-card:hover { box-shadow:var(--shadow); transform:translateY(-2px); }
 .metric-value { font-size:1.8rem; font-weight:700; color:var(--texto); line-height:1;
     margin-bottom:.3rem; font-family:'JetBrains Mono',monospace; }
 .metric-value.laranja { color:var(--laranja-vivo); }
 .metric-value.sucesso { color:var(--sucesso); }
 .metric-value.erro    { color:var(--erro); }
+.metric-value.aviso   { color:var(--aviso); }
 .metric-label { font-size:.78rem; font-weight:500; color:var(--texto-leve); letter-spacing:.5px; text-transform:uppercase; }
+.dup-banner {
+    background: linear-gradient(135deg, #FFF8E1 0%, #FFF3CD 100%);
+    border: 2px solid var(--dup-borda);
+    border-left: 5px solid #F59E0B;
+    border-radius: var(--radius);
+    padding: 1.2rem 1.5rem;
+    margin: 1rem 0;
+}
+.dup-banner-title {
+    font-size: 1rem; font-weight: 700; color: #92400E;
+    display: flex; align-items: center; gap: .5rem; margin-bottom: .8rem;
+}
+.dup-pair {
+    background: white;
+    border: 1px solid var(--dup-borda);
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: .8rem;
+}
+.dup-pair-header { font-size:.8rem; font-weight:700; color:#92400E; text-transform:uppercase;
+    letter-spacing:.8px; margin-bottom:.6rem; }
+.dup-fields { display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; }
+.dup-field { background:#FFF8F0; border-radius:6px; padding:.4rem .7rem; }
+.dup-field-label { font-size:.7rem; color:var(--texto-leve); font-weight:600; text-transform:uppercase; }
+.dup-field-value { font-size:.85rem; color:var(--texto); font-weight:600; font-family:'JetBrains Mono',monospace; }
 .stButton > button {
     background:linear-gradient(135deg,var(--laranja) 0%,var(--laranja-vivo) 100%) !important;
     color:white !important; border:none !important; border-radius:var(--radius) !important;
@@ -75,6 +103,7 @@ hr { border-color:var(--cinza-borda) !important; margin:1.5rem 0 !important; }
     .main .block-container { padding:1rem 1.2rem; }
     .metrics-grid { grid-template-columns:repeat(2,1fr); }
     .hero-title { font-size:1.4rem; }
+    .dup-fields { grid-template-columns:repeat(2,1fr); }
 }
 </style>
 """
@@ -126,25 +155,25 @@ def extrair_numero_nf(texto):
     Extrai o numero da NF/NFS-e corretamente.
     Suporta: NF-e DANFE, Omie, DANFSe Santarem, NFSe prefeituras.
     """
-    # 1. DANFSe Santarem: "NumerodaNFS-e Competencia DataHora\n30 09/02/2026..."
+    # 1. DANFSe Santarem
     m = re.search(r'NumerodaNFS-e\s+\S+\s+\S+\s*\n(\d+)\s+', texto, re.IGNORECASE)
     if m:
         try: return str(int(m.group(1)))
         except ValueError: pass
 
-    # 2. NFSe Belem/prefeituras: "Numero / Serie\n09/12/2025 11:55:31 12/2025 9313 / E"
+    # 2. NFSe Belem/prefeituras
     m = re.search(r'Numero\s*/\s*Serie[^\n]*\n[^\n]*?(\d{2,})\s*/\s*[A-Z]', texto, re.IGNORECASE)
     if m:
         try: return str(int(m.group(1)))
         except ValueError: pass
 
-    # 3. NFSe generica: "Numero da NFS-e\n30"
+    # 3. NFSe generica
     m = re.search(r'Numero\s+da\s+NFS-?e\s*\n(\d+)', texto, re.IGNORECASE)
     if m:
         try: return str(int(m.group(1)))
         except ValueError: pass
 
-    # 4. DANFE NF-e: linha "No 202.001" ou "No. 000.202.001" seguida de "Serie" ou "DATA"
+    # 4. DANFE NF-e
     m = re.search(
         r'(?:^|\n)\s*N[o.]?\s*\.?\s*([\d. ]+)\s*\n\s*(?:Serie|SERIE|DATA|Folha|FOLHA)',
         texto, re.IGNORECASE | re.MULTILINE
@@ -154,13 +183,13 @@ def extrair_numero_nf(texto):
         try: return str(int(raw))
         except ValueError: pass
 
-    # 5. Goianesia NFS-e: "No 416 / PAGINA"
+    # 5. Goianesia NFS-e
     m = re.search(r'(?:^|\n)\s*No\s+(\d+)\s*\n\s*(?:PAGINA|NF-e\s+Emitida)', texto, re.IGNORECASE | re.MULTILINE)
     if m:
         try: return str(int(m.group(1)))
         except ValueError: pass
 
-    # 6. Fallback: No/N. numero curto (max 9 digitos, evita chave de acesso)
+    # 6. Fallback
     m = re.search(r'N[o.]+\s*([\d.]{1,12})(?:\s|$)', texto, re.IGNORECASE | re.MULTILINE)
     if m:
         raw = m.group(1).replace('.', '').replace(' ', '')
@@ -194,7 +223,6 @@ def _ascii(txt):
 def _extrair_emitente_por_bbox(pdf_bytes):
     """
     Extrai o nome do emitente usando posicao (bbox) com x_tolerance=1.
-    Funciona para todos os tipos: DANFSe, NFSe prefeituras, NF-e DANFE/Omie.
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -202,30 +230,19 @@ def _extrair_emitente_por_bbox(pdf_bytes):
             words = page.extract_words(x_tolerance=1, y_tolerance=3)
 
         blocos = [
-            # DANFSe Santarem / NFSe: "EMITENTE DA NFS" -> "NOME ... EMPRESARIAL" -> nome -> "TOMADOR"
             (['EMITENTE', 'NFS'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
-            # NFSe prefeituras (Belem): "EMITENTE PRESTADOR" -> "NOME ... EMPRESARIAL" -> nome
             (['EMITENTE', 'PRESTADOR'], ['TOMADOR'], ['NOME', 'EMPRESARIAL']),
-            # NF-e Omie: "IDENTIFICACAO ... EMITENTE" -> "NOME ... EMPRESARIAL" -> nome
             (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['NOME', 'EMPRESARIAL']),
-            # NF-e SEFAZ: "IDENTIFICACAO ... EMITENTE" -> "RAZAO SOCIAL" -> nome
             (['IDENTIFICACAO', 'EMITENTE'], ['DESTINATARIO'], ['RAZAO', 'SOCIAL']),
         ]
 
         def achar_y_subsequencia(words_list, palavras, y_min=0, y_max=9999):
-            """
-            Acha o Y de uma linha que contenha todas as palavras da lista
-            em qualquer ordem/posicao (nao precisa ser consecutivas).
-            Agrupa palavras pela mesma linha (mesmo Y arredondado).
-            """
-            # Agrupar por linha (round Y a 2 casas)
             linhas = {}
             for w in words_list:
                 if not (y_min <= w['top'] <= y_max):
                     continue
                 y_key = round(w['top'], 0)
                 linhas.setdefault(y_key, []).append(_ascii(w['text']).upper())
-
             for y_key in sorted(linhas.keys()):
                 tokens = ' '.join(linhas[y_key])
                 if all(p in tokens for p in palavras):
@@ -233,7 +250,6 @@ def _extrair_emitente_por_bbox(pdf_bytes):
             return None
 
         def palavras_na_linha(words_list, y_ref, y_offset_min=3, y_offset_max=22, x_max=420):
-            """Coleta palavras na proxima linha apos y_ref."""
             resultado = []
             for w in words_list:
                 if y_ref + y_offset_min <= w['top'] <= y_ref + y_offset_max and w['x0'] < x_max:
@@ -251,13 +267,10 @@ def _extrair_emitente_por_bbox(pdf_bytes):
             y_inicio = achar_y_subsequencia(words, palavras_inicio)
             if y_inicio is None:
                 continue
-
             y_fim = achar_y_subsequencia(words, palavras_fim, y_min=y_inicio + 5) or 9999
-
             y_label = achar_y_subsequencia(words, palavras_label, y_min=y_inicio, y_max=y_fim)
             if y_label is None:
                 continue
-
             nome_words = palavras_na_linha(words, y_label, x_max=420)
             if nome_words:
                 nome = ' '.join(nome_words).strip()
@@ -272,16 +285,12 @@ def _extrair_emitente_por_bbox(pdf_bytes):
 def _extrair_tomador_por_bbox(pdf_bytes):
     """
     Extrai o nome do tomador/destinatario usando posicao (bbox).
-    Suporta dois padroes:
-      - Label inline: "Nome/Razao: EMPRESA LTDA" (nome na mesma linha do label)
-      - Label separado: "Nome/Razao Social\nEMPRESA LTDA" (nome na linha seguinte)
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             page = pdf.pages[0]
             words = page.extract_words(x_tolerance=1, y_tolerance=3)
 
-        # Agrupar palavras por linha (Y arredondado)
         def agrupar_linhas(words_list, y_min=0, y_max=9999):
             linhas = {}
             for w in words_list:
@@ -292,7 +301,6 @@ def _extrair_tomador_por_bbox(pdf_bytes):
             return dict(sorted(linhas.items()))
 
         def achar_y_bloco(linhas_dict, palavras):
-            """Acha Y da linha que contem todas as palavras-chave."""
             for y_key, ws in linhas_dict.items():
                 tokens = ' '.join(_ascii(w['text']).upper() for w in ws)
                 if all(p in tokens for p in palavras):
@@ -300,10 +308,6 @@ def _extrair_tomador_por_bbox(pdf_bytes):
             return None
 
         def nome_apos_label(linhas_dict, y_label, x_label_max=90, y_fim=9999):
-            """
-            Pega o nome que esta apos o label 'Nome/Razao:' na MESMA linha.
-            Retorna as palavras com x > x_label_max na linha y_label.
-            """
             y_key = round(y_label, 0)
             if y_key not in linhas_dict:
                 return []
@@ -317,7 +321,6 @@ def _extrair_tomador_por_bbox(pdf_bytes):
             return resultado
 
         def nome_linha_seguinte(linhas_dict, y_label, y_fim=9999, x_max=450):
-            """Pega palavras na linha imediatamente apos y_label."""
             ys = sorted(k for k in linhas_dict if k > y_label + 2 and k < y_fim)
             if not ys:
                 return []
@@ -334,14 +337,10 @@ def _extrair_tomador_por_bbox(pdf_bytes):
 
         linhas = agrupar_linhas(words)
 
-        # Blocos a tentar: (palavras_inicio_bloco, palavras_label_nome)
         blocos = [
-            # Goianesia/prefeituras: "TOMADOR DE SERVICOS" -> "Nome/Razao:" inline
             (['TOMADOR'], ['NOME', 'RAZAO']),
-            # NF-e DANFE/Omie: "DESTINATARIO" -> "NOME/RAZAO SOCIAL" ou "RAZAO SOCIAL"
             (['DESTINATARIO'], ['NOME', 'RAZAO']),
             (['DESTINATARIO'], ['RAZAO', 'SOCIAL']),
-            # NFSe prefeituras Belem: "TOMADOR DO SERVICO" -> "Nome / Nome Empresarial"
             (['TOMADOR'], ['NOME', 'EMPRESARIAL']),
         ]
 
@@ -349,21 +348,15 @@ def _extrair_tomador_por_bbox(pdf_bytes):
             y_bloco = achar_y_bloco(linhas, palavras_bloco)
             if y_bloco is None:
                 continue
-
             y_label = achar_y_bloco(
                 {k: v for k, v in linhas.items() if k > y_bloco + 2},
                 palavras_label
             )
             if y_label is None:
                 continue
-
-            # Tentar primeiro: nome na MESMA linha do label (apos x=80)
             nome_words = nome_apos_label(linhas, y_label, x_label_max=80)
-
-            # Se nao achou na mesma linha, tentar linha seguinte
             if not nome_words:
                 nome_words = nome_linha_seguinte(linhas, y_label)
-
             if nome_words:
                 nome = ' '.join(nome_words).strip()
                 if nome and len(nome) >= 3 and candidato_valido(nome):
@@ -390,7 +383,6 @@ def extrair_info_nota_fiscal(pdf_bytes):
         if not texto_raw.strip():
             return None, None, None, None, None, None
 
-        # Trabalhar com texto ASCII (sem acentos) para facilitar regex
         texto = ascii_normalizar(texto_raw)
         texto_up = texto.upper()
 
@@ -402,7 +394,6 @@ def extrair_info_nota_fiscal(pdf_bytes):
         numero_nf = None
 
         # ── Tipo ──────────────────────────────────────────────────────────
-        # NFS-e tem prioridade sobre NF-e pois alguns PDFs tem os dois termos
         if "NFS-E" in texto_up or "NOTA FISCAL DE SERVICO" in texto_up or "NOTA FISCAL DE SERVI" in texto_up or "DANFSE" in texto_up:
             tipo_nf = "NFS-e"
         elif "DANFE" in texto_up or "DOCUMENTO AUXILIAR DA NOTA FISCAL" in texto_up:
@@ -421,9 +412,7 @@ def extrair_info_nota_fiscal(pdf_bytes):
         for p in [
             r'EMISSAO:\s*(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'DATA\s+DA\s+EMISSAO\s+(\d{2}[/\-]\d{2}[/\-]\d{4})',
-            # Goianesia: "NF-e Emitida em: 11/12/2025"
             r'NF-e\s+Emitida\s+em:\s*(\d{2}[/\-]\d{2}[/\-]\d{4})',
-            # Goianesia: "Data emissao 11/12/2025"
             r'Data\s+emissao\s+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'EMISSAO\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
             r'Data\s+de\s+Competencia\s*[:\s]+(\d{2}[/\-]\d{2}[/\-]\d{4})',
@@ -436,32 +425,26 @@ def extrair_info_nota_fiscal(pdf_bytes):
                 if data:
                     break
 
-        # ── Emitente (fornecedor que emitiu a NF) ─────────────────────────
-        # 0. Tentativa bbox (funciona para todos os tipos, inclusive texto colado)
+        # ── Emitente ─────────────────────────────────────────────────────
         emitente_bbox = _extrair_emitente_por_bbox(pdf_bytes)
         if emitente_bbox and candidato_valido(emitente_bbox):
             emitente = emitente_bbox
 
-        # 1. Goianesia NFS-e: TOMADOR DE SERVICOS + Nome/Razao = emitente real
-        # Neste layout Rezende e o PRESTADOR, e o fornecedor e o TOMADOR
         if not emitente:
             m = re.search(r'TOMADOR\s+DE\s+SERVICOS.*?Nome/Razao:\s*([^\n]+)', texto, re.IGNORECASE | re.DOTALL)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 1b. Omie: "RECEBEMOS DE [EMPRESA] OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 2. Padrao SEFAZ: "RECEBI(EMOS) DE [EMPRESA], OS PRODUTOS"
         if not emitente:
             m = re.search(r'RECEBI\(EMOS\)\s+DE\s+(.+?),\s+OS\s+PRODUTOS', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 3. Omie: linha apos "IDENTIFICACAO DO EMITENTE"
         if not emitente:
             m = re.search(
                 r'IDENTIFICACAO\s+DO\s+EMITENTE[^\n]*\n([A-Z][A-Z0-9 &.,/\-]{2,70}?)\s+(?:Eletro|DANFE|0\s+-|1\s+-)',
@@ -470,13 +453,11 @@ def extrair_info_nota_fiscal(pdf_bytes):
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 4. DANFSe Santarem: usar bbox para separar texto colado
         if not emitente and "DANFSE" in texto_up or "DANFSEV" in texto_up:
             c = _extrair_emitente_por_bbox(pdf_bytes)
             if c and candidato_valido(c):
                 emitente = c
             else:
-                # Fallback: pegar via regex e aceitar colado
                 m = re.search(
                     r'EMITENTEDANFS-e.*?Nome/NomeEmpresarial[^\n]*\n([^\n]{3,80})',
                     texto, re.IGNORECASE | re.DOTALL
@@ -486,7 +467,6 @@ def extrair_info_nota_fiscal(pdf_bytes):
                     if candidato_valido(c):
                         emitente = c
 
-        # 5. NFSe Belem/outras prefeituras: "EMITENTE PRESTADOR DO SERVICO ... Nome / Nome Empresarial\nNOME email"
         if not emitente:
             m = re.search(
                 r'EMITENTE\s+PRESTADOR\s+DO\s+SERVICO.*?Nome\s*/\s*Nome\s+Empresarial[^\n]*\n([^\n]{3,80})',
@@ -497,25 +477,21 @@ def extrair_info_nota_fiscal(pdf_bytes):
                 if candidato_valido(c):
                     emitente = c
 
-        # 6. NFS-e generica: Prestador de Servicos
         if not emitente:
             m = re.search(r'Prestador\s+de\s+Servicos\s*\n\s*([A-Z][^\n\r]{2,79})', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 7. Label "Emitente:"
         if not emitente:
             m = re.search(r'Emitente\s*[:\s]+([^\n\r]{3,80})', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 8. Razao Social generica (primeira ocorrencia)
         if not emitente:
             m = re.search(r'Razao\s+Social\s*[:\s]+([^\n\r]{3,80})', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
                 emitente = m.group(1).strip()
 
-        # 9. Fallback: linha com sufixo empresarial
         if not emitente:
             m = re.search(
                 r'\n([A-Z][A-Z0-9 &.,/\-]{2,60}(?:S\.A|LTDA|EIRELI|DISTRIBUIDORA|INDUSTRIA|CONSTRUTORA|COMERCIO|ENERGIA)\.?)\n',
@@ -531,9 +507,7 @@ def extrair_info_nota_fiscal(pdf_bytes):
             r'Valor\s+Total\s+da\s+Nota\s*[:\s]*R?.\s*([\d.,]+)',
             r'Valor\s+Total\s*[:\s]*R?.\s*([\d.,]+)',
             r'TOTAL\s+GERAL\s*[:\s]*R?.\s*([\d.,]+)',
-            # Goianesia: "=) Valor liquido R$ 960,00"
             r'=\)\s*Valor\s+liquido\s+R\$\s*([\d.,]+)',
-            # Goianesia: "Valor da nota R$ 960,00"
             r'Valor\s+da\s+nota\s+R\$\s*([\d.,]+)',
             r'Valor\s+dos\s+Servicos\s*[:\s]*R?.\s*([\d.,]+)',
         ]:
@@ -552,12 +526,11 @@ def extrair_info_nota_fiscal(pdf_bytes):
                 except ValueError:
                     continue
 
-        # ── Tomador (quem recebeu o serviço) ──────────────────────────────
+        # ── Tomador ───────────────────────────────────────────────────────
         tomador_bbox = _extrair_tomador_por_bbox(pdf_bytes)
         if tomador_bbox and candidato_valido(tomador_bbox):
             tomador = tomador_bbox
 
-        # Fallback regex para tomador
         if not tomador:
             for p in [
                 r'Tomador\s+de\s+Servicos\s*\n\s*([A-Z][^\n\r]{2,79})',
@@ -569,7 +542,6 @@ def extrair_info_nota_fiscal(pdf_bytes):
                     tomador = m.group(1).strip()
                     break
 
-        # Fallback: Nome/Razão após "TOMADOR"
         if not tomador:
             m = re.search(r'Nome/Razao[^\n]*\n([A-Z][^\n\r]{2,79})', texto, re.IGNORECASE)
             if m and candidato_valido(m.group(1)):
@@ -583,12 +555,53 @@ def extrair_info_nota_fiscal(pdf_bytes):
 
 
 # =============================================================================
+#  DETECÇÃO DE DUPLICATAS
+# =============================================================================
+
+def chave_duplicata(r):
+    """
+    Gera uma chave de comparação para detectar duplicatas reais.
+    Usa: numero_nf + fornecedor_utilizado + data + valor (arredondado).
+    """
+    num = (r.get('numero_nf') or '').strip().upper()
+    fornecedor = (r.get('fornecedor_usado') or '').strip().upper()
+    data = (r.get('data') or '').strip()
+    # Arredonda valor para 2 casas para evitar falsos negativos por float
+    valor = r.get('valor')
+    valor_key = "{:.4f}".format(valor) if valor is not None else 'N/A'
+    return (num, fornecedor, data, valor_key)
+
+
+def detectar_duplicatas(resultados):
+    """
+    Analisa a lista de resultados e retorna:
+      - grupos_dup: lista de listas de índices que são duplicatas entre si
+      - indices_dup: set de todos os índices que fazem parte de algum grupo duplicado
+    Um documento é considerado duplicata quando NF + fornecedor + data + valor coincidem.
+    Ignora documentos onde algum campo-chave está ausente (N/A).
+    """
+    from collections import defaultdict
+    chaves = {}
+    grupos_por_chave = defaultdict(list)
+
+    for i, r in enumerate(resultados):
+        chave = chave_duplicata(r)
+        # Só detecta duplicata se tiver pelo menos número e fornecedor
+        if chave[0] == '' or chave[0] == 'N/A' or chave[1] == '' or chave[1] == 'N/A':
+            continue
+        grupos_por_chave[chave].append(i)
+
+    grupos_dup = [indices for indices in grupos_por_chave.values() if len(indices) > 1]
+    indices_dup = set(i for grupo in grupos_dup for i in grupo)
+    return grupos_dup, indices_dup
+
+
+# =============================================================================
 #  PROCESSAMENTO
 # =============================================================================
 
 def processar_pdfs(uploaded_files, modo='emitente'):
     resultados = []
-    arquivos_zip = []
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -598,7 +611,6 @@ def processar_pdfs(uploaded_files, modo='emitente'):
 
         data, emitente, tipo_nf, valor, numero_nf, tomador = extrair_info_nota_fiscal(pdf_bytes)
 
-        # Escolhe quem usar para nomear
         razao_escolhida = tomador if modo == 'tomador' else emitente
 
         if numero_nf and razao_escolhida:
@@ -614,69 +626,246 @@ def processar_pdfs(uploaded_files, modo='emitente'):
         tomador_limpo  = limpar_nome(tomador)  if tomador  else 'N/A'
 
         resultados.append({
-            'original':  uf.name,
-            'novo_nome': novo_nome,
-            'status':    status,
-            'tipo':      tipo_nf or 'Desconhecido',
-            'numero_nf': numero_nf or 'N/A',
-            'data':      data or 'N/A',
-            'emitente':  emitente_limpo,
-            'tomador':   tomador_limpo,
-            'valor':     valor,
-            '_bytes':    pdf_bytes,
+            'original':       uf.name,
+            'novo_nome':      novo_nome,
+            'status':         status,
+            'tipo':           tipo_nf or 'Desconhecido',
+            'numero_nf':      numero_nf or 'N/A',
+            'data':           data or 'N/A',
+            'emitente':       emitente_limpo,
+            'tomador':        tomador_limpo,
+            'fornecedor_usado': razao_limpa if razao_limpa != 'N/A' else (emitente_limpo if emitente_limpo != 'N/A' else tomador_limpo),
+            'valor':          valor,
+            '_bytes':         pdf_bytes,
+            'duplicata':      False,  # será preenchido depois
+            'grupo_dup':      None,
         })
-        arquivos_zip.append((novo_nome if novo_nome != '-' else uf.name, pdf_bytes))
         progress_bar.progress((idx + 1) / len(uploaded_files))
 
     status_text.text("✅ Processamento concluído!")
 
-    # Resolve nomes duplicados: atualiza resultados E arquivos_zip juntos
-    def dedup_nome(nome, contador):
-        if nome not in contador:
-            contador[nome] = 1
-            return nome
-        else:
-            contador[nome] += 1
-            base, ext = (nome.rsplit('.', 1) if '.' in nome else (nome, ''))
-            return "{} ({}).{}".format(base, contador[nome], ext) if ext else "{} ({})".format(base, contador[nome])
+    # ── Detecção de duplicatas ─────────────────────────────────────────
+    grupos_dup, indices_dup = detectar_duplicatas(resultados)
+    for grupo_idx, grupo in enumerate(grupos_dup):
+        for i in grupo:
+            resultados[i]['duplicata'] = True
+            resultados[i]['grupo_dup'] = grupo_idx
+            resultados[i]['status'] = '⚠️ Possível duplicata'
 
+    # ── Resolve nomes duplicados (contador) apenas para nomes de arquivo ──
+    # NÃO aplica contador em notas identificadas como duplicata real —
+    # elas ficam com o mesmo nome para evidenciar a duplicidade.
     nomes_counter = {}
     for i in range(len(resultados)):
         nome_orig = resultados[i]['novo_nome']
         if nome_orig == '-':
             continue
-        nome_final = dedup_nome(nome_orig, nomes_counter)
-        resultados[i]['novo_nome'] = nome_final
-        arquivos_zip[i] = (nome_final, arquivos_zip[i][1])
+        if resultados[i]['duplicata']:
+            # Mantém o mesmo nome; o usuário decide o que fazer
+            continue
+        if nome_orig not in nomes_counter:
+            nomes_counter[nome_orig] = 1
+        else:
+            nomes_counter[nome_orig] += 1
+            base, ext = (nome_orig.rsplit('.', 1) if '.' in nome_orig else (nome_orig, ''))
+            resultados[i]['novo_nome'] = "{} ({}).{}".format(base, nomes_counter[nome_orig], ext) if ext else "{} ({})".format(base, nomes_counter[nome_orig])
 
-    if len(uploaded_files) == 1:
-        return None, resultados
+    return resultados, grupos_dup
 
+
+def montar_zip(pares):
+    """Recebe lista de (nome, bytes) e retorna bytes de um ZIP."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for nome, conteudo in arquivos_zip:
+        for nome, conteudo in pares:
             zf.writestr(nome, conteudo)
-    return buf.getvalue(), resultados
+    return buf.getvalue()
 
 
 # =============================================================================
 #  METRICAS
 # =============================================================================
 
-def render_metricas(resultados):
+def render_metricas(resultados, grupos_dup):
     total = len(resultados)
     sucesso = sum(1 for r in resultados if '✅' in r['status'])
-    erros = total - sucesso
-    valor_total = sum(r.get('valor') or 0 for r in resultados)
+    erros = sum(1 for r in resultados if '⚠️ Informações' in r['status'])
+    duplicatas = sum(1 for r in resultados if r['duplicata'])
+    unicas = total - duplicatas
+    valor_total = sum(r.get('valor') or 0 for r in resultados if not r['duplicata'])
+    # Para valor, conta apenas 1 de cada grupo de duplicatas
+    for grupo in grupos_dup:
+        r = resultados[grupo[0]]
+        valor_total += r.get('valor') or 0
     valor_fmt = "R$ {:,.2f}".format(valor_total).replace(',', '_').replace('.', ',').replace('_', '.')
+
+    aviso_class = ' aviso' if duplicatas > 0 else ''
+
     st.markdown("""
     <div class="metrics-grid">
-        <div class="metric-card"><div class="metric-value laranja">{total}</div><div class="metric-label">Total de Arquivos</div></div>
-        <div class="metric-card"><div class="metric-value sucesso">{sucesso}</div><div class="metric-label">Processados com Sucesso</div></div>
-        <div class="metric-card"><div class="metric-value erro">{erros}</div><div class="metric-label">Erros / Avisos</div></div>
-        <div class="metric-card"><div class="metric-value laranja" style="font-size:1.3rem">{valor}</div><div class="metric-label">Valor Total</div></div>
+        <div class="metric-card"><div class="metric-value laranja">{total}</div><div class="metric-label">Total Processadas</div></div>
+        <div class="metric-card"><div class="metric-value sucesso">{sucesso}</div><div class="metric-label">Sucesso</div></div>
+        <div class="metric-card"><div class="metric-value">{unicas}</div><div class="metric-label">Notas Únicas</div></div>
+        <div class="metric-card{aviso_class}"><div class="metric-value aviso">{duplicatas}</div><div class="metric-label">Possíveis Duplicatas</div></div>
+        <div class="metric-card"><div class="metric-value laranja" style="font-size:1.2rem">{valor}</div><div class="metric-label">Valor Total (únicas)</div></div>
     </div>
-    """.format(total=total, sucesso=sucesso, erros=erros, valor=valor_fmt), unsafe_allow_html=True)
+    """.format(
+        total=total, sucesso=sucesso, unicas=unicas,
+        duplicatas=duplicatas, valor=valor_fmt, aviso_class=aviso_class
+    ), unsafe_allow_html=True)
+
+
+# =============================================================================
+#  PAINEL DE DUPLICATAS
+# =============================================================================
+
+def render_painel_duplicatas(resultados, grupos_dup):
+    """
+    Exibe o painel de análise de duplicatas com opções de ação para cada grupo.
+    Retorna: dict { grupo_idx -> acao } onde acao in ['ignorar', 'manter_primeiro', 'manter_segundo', 'baixar_ambos']
+    """
+    if not grupos_dup:
+        return {}
+
+    st.markdown("""
+    <div class="dup-banner">
+        <div class="dup-banner-title">⚠️ Possíveis Notas Fiscais Duplicadas Detectadas</div>
+        <p style="margin:0; color:#78350F; font-size:.9rem;">
+            Foram encontrados <strong>{qtd} grupo(s)</strong> de notas com mesmo número, fornecedor, data e valor.
+            Revise abaixo e escolha como proceder para cada grupo antes de baixar os arquivos.
+        </p>
+    </div>
+    """.format(qtd=len(grupos_dup)), unsafe_allow_html=True)
+
+    acoes = {}
+
+    for grupo_idx, grupo in enumerate(grupos_dup):
+        r0 = resultados[grupo[0]]
+        r1 = resultados[grupo[1]] if len(grupo) > 1 else None
+
+        valor_fmt = "R$ {:,.2f}".format(r0['valor']).replace(',', '_').replace('.', ',').replace('_', '.') if r0.get('valor') else 'N/A'
+
+        st.markdown("""
+        <div class="dup-pair">
+            <div class="dup-pair-header">🔍 Grupo {} — {} arquivo(s) idêntico(s)</div>
+            <div class="dup-fields">
+                <div class="dup-field">
+                    <div class="dup-field-label">Número NF</div>
+                    <div class="dup-field-value">{numero}</div>
+                </div>
+                <div class="dup-field">
+                    <div class="dup-field-label">Fornecedor</div>
+                    <div class="dup-field-value">{fornecedor}</div>
+                </div>
+                <div class="dup-field">
+                    <div class="dup-field-label">Data Emissão</div>
+                    <div class="dup-field-value">{data}</div>
+                </div>
+                <div class="dup-field">
+                    <div class="dup-field-label">Valor Total</div>
+                    <div class="dup-field-value">{valor}</div>
+                </div>
+            </div>
+        </div>
+        """.format(
+            grupo_idx=grupo_idx + 1,
+            qtd=len(grupo),
+            numero=r0.get('numero_nf', 'N/A'),
+            fornecedor=r0.get('fornecedor_usado', 'N/A')[:35] + ('...' if len(r0.get('fornecedor_usado','')) > 35 else ''),
+            data=r0.get('data', 'N/A'),
+            valor=valor_fmt,
+        ), unsafe_allow_html=True)
+
+        # Arquivos envolvidos
+        for i, idx in enumerate(grupo):
+            r = resultados[idx]
+            st.caption("📄 Arquivo {}: `{}`".format(i + 1, r['original']))
+
+        col1, col2, col3, col4 = st.columns(4)
+        chave_sessao = 'dup_acao_{}'.format(grupo_idx)
+
+        with col1:
+            if st.button("✅ Ignorar duplicidade", key="ign_{}".format(grupo_idx), use_container_width=True):
+                st.session_state[chave_sessao] = 'ignorar'
+        with col2:
+            label_manter1 = "📄 Manter apenas 1º" if len(grupo) == 2 else "📄 Manter 1º arquivo"
+            if st.button(label_manter1, key="man1_{}".format(grupo_idx), use_container_width=True):
+                st.session_state[chave_sessao] = 'manter_primeiro'
+        with col3:
+            if len(grupo) >= 2:
+                if st.button("📄 Manter apenas 2º", key="man2_{}".format(grupo_idx), use_container_width=True):
+                    st.session_state[chave_sessao] = 'manter_segundo'
+            else:
+                st.empty()
+        with col4:
+            if st.button("📥 Baixar os dois", key="amb_{}".format(grupo_idx), use_container_width=True):
+                st.session_state[chave_sessao] = 'baixar_ambos'
+
+        acao_atual = st.session_state.get(chave_sessao, None)
+        if acao_atual:
+            labels = {
+                'ignorar':         '✅ Ambos incluídos no download com nomes distintos',
+                'manter_primeiro': '📄 Apenas o 1º arquivo será incluído no download',
+                'manter_segundo':  '📄 Apenas o 2º arquivo será incluído no download',
+                'baixar_ambos':    '📥 Ambos serão incluídos com nomes distintos (com sufixo)',
+            }
+            st.info(labels.get(acao_atual, ''))
+            acoes[grupo_idx] = acao_atual
+        else:
+            st.warning("⏳ Aguardando sua decisão para este grupo...")
+
+        st.divider()
+
+    return acoes
+
+
+# =============================================================================
+#  CONSTRUÇÃO DO ZIP FINAL
+# =============================================================================
+
+def construir_arquivos_download(resultados, grupos_dup, acoes):
+    """
+    Com base nas ações escolhidas pelo usuário para cada grupo de duplicatas,
+    retorna a lista final de (nome, bytes) para download.
+    """
+    # Índices a excluir do download
+    excluir = set()
+    # Índices que devem ter sufixo numérico (baixar ambos / ignorar)
+    sufixar = {}  # idx -> sufixo string
+
+    for grupo_idx, grupo in enumerate(grupos_dup):
+        acao = acoes.get(grupo_idx, 'baixar_ambos')  # padrão: inclui ambos
+
+        if acao == 'manter_primeiro':
+            for idx in grupo[1:]:
+                excluir.add(idx)
+        elif acao == 'manter_segundo':
+            excluir.add(grupo[0])
+            for idx in grupo[2:]:
+                excluir.add(idx)
+        elif acao in ('ignorar', 'baixar_ambos'):
+            # Inclui todos, mas com sufixo para diferenciar
+            for sufixo_n, idx in enumerate(grupo, start=1):
+                sufixar[idx] = '_DUP{}'.format(sufixo_n)
+
+    pares = []
+    nomes_usados = {}
+    for i, r in enumerate(resultados):
+        if i in excluir:
+            continue
+        nome = r['novo_nome'] if r['novo_nome'] != '-' else r['original']
+        if i in sufixar:
+            base, ext = (nome.rsplit('.', 1) if '.' in nome else (nome, ''))
+            nome = "{}{}.{}".format(base, sufixar[i], ext) if ext else "{}{}".format(base, sufixar[i])
+        # Evita colisão residual
+        if nome in nomes_usados:
+            nomes_usados[nome] += 1
+            base, ext = (nome.rsplit('.', 1) if '.' in nome else (nome, ''))
+            nome = "{} ({}).{}".format(base, nomes_usados[nome], ext) if ext else "{} ({})".format(base, nomes_usados[nome])
+        else:
+            nomes_usados[nome] = 1
+        pares.append((nome, r['_bytes']))
+    return pares
 
 
 # =============================================================================
@@ -691,9 +880,9 @@ def main():
     <div class="hero-header">
         <div class="hero-title">🧾 Renomeador de <span>Notas Fiscais</span></div>
         <div class="hero-subtitle">
-            Processa notas fiscais em PDF e as renomeia automaticamente no padrao<br>
-            <strong style="color:#FFD39A;">NF [Numero] &mdash; Razao Social</strong>
-            &mdash; escolha entre <strong style="color:#F7931E;">Emitente/Prestador</strong> ou <strong style="color:#F7931E;">Tomador/Destinatário</strong>.
+            Processa notas fiscais em PDF e as renomeia automaticamente no padrão<br>
+            <strong style="color:#FFD39A;">NF [Numero] &mdash; Razão Social</strong>
+            &mdash; com detecção inteligente de <strong style="color:#F7931E;">duplicatas reais</strong>.
         </div>
         <div class="hero-badges">
             <span class="badge">📄 NF-e DANFE</span>
@@ -701,14 +890,15 @@ def main():
             <span class="badge">🛠️ NFS-e</span>
             <span class="badge">🧾 NF SIMPLES</span>
             <span class="badge">🏷️ CF-e / SAT</span>
-            <span class="badge">🔠 SEMPRE MAIUSCULAS</span>
+            <span class="badge">🔍 DETECÇÃO DE DUPLICATAS</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Upload ────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="section-label"><span>01</span> Upload</div>
-    <div class="section-title">Envie os PDFs das notas fiscais (pode selecionar varios de uma vez)</div>
+    <div class="section-title">Envie os PDFs das notas fiscais (pode selecionar vários de uma vez)</div>
     """, unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader(
@@ -718,93 +908,139 @@ def main():
         help="Selecione um ou mais PDFs de notas fiscais"
     )
 
-    if uploaded_files:
-        qtd = len(uploaded_files)
-        st.success("✅ {} arquivo(s) carregado(s)".format(qtd))
+    if not uploaded_files:
+        return
 
+    qtd = len(uploaded_files)
+    st.success("✅ {} arquivo(s) carregado(s)".format(qtd))
+
+    # ── Modo ──────────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-label"><span>02</span> Modo de Renomeação</div>
+    <div class="section-title">Escolha qual razão social usar no nome do arquivo</div>
+    """, unsafe_allow_html=True)
+
+    col1, _ = st.columns(2)
+    with col1:
+        modo = st.radio(
+            "Usar como nome:",
+            options=["emitente", "tomador"],
+            format_func=lambda x: "🏭 Emitente / Prestador (quem emitiu a NF)" if x == "emitente" else "🏢 Tomador / Destinatário (quem recebeu)",
+            index=0,
+            label_visibility="collapsed"
+        )
+
+    if not st.button("🚀 Processar Notas Fiscais", type="primary", use_container_width=True):
+        return
+
+    # ── Processamento ─────────────────────────────────────────────────────
+    with st.spinner("Processando notas fiscais..."):
+        resultados, grupos_dup = processar_pdfs(uploaded_files, modo=modo)
+
+    st.divider()
+
+    # ── Resultados ────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="section-label"><span>03</span> Resultados</div>
+    <div class="section-title">Resumo do Processamento</div>
+    """, unsafe_allow_html=True)
+
+    render_metricas(resultados, grupos_dup)
+
+    # Tabela — marca duplicatas visualmente
+    df_display = []
+    for r in resultados:
+        linha = {k: v for k, v in r.items() if not k.startswith('_') and k not in ('duplicata', 'grupo_dup', 'fornecedor_usado')}
+        if r['duplicata']:
+            linha['status'] = '🔴 Possível duplicata'
+        df_display.append(linha)
+
+    st.dataframe(df_display, use_container_width=True, hide_index=True,
+        column_config={
+            'original':  st.column_config.TextColumn('Nome Original'),
+            'novo_nome': st.column_config.TextColumn('Novo Nome'),
+            'status':    st.column_config.TextColumn('Status'),
+            'tipo':      st.column_config.TextColumn('Tipo'),
+            'numero_nf': st.column_config.TextColumn('Número NF'),
+            'data':      st.column_config.TextColumn('Data de Emissão'),
+            'emitente':  st.column_config.TextColumn('Emitente / Prestador'),
+            'tomador':   st.column_config.TextColumn('Tomador / Destinatário'),
+            'valor':     st.column_config.NumberColumn('Valor Total', format="R$ %.2f"),
+        })
+
+    st.divider()
+
+    # ── Painel de duplicatas ──────────────────────────────────────────────
+    acoes = {}
+    if grupos_dup:
         st.markdown("""
-        <div class="section-label"><span>02</span> Modo de Renomeação</div>
-        <div class="section-title">Escolha qual razão social usar no nome do arquivo</div>
+        <div class="section-label"><span>04</span> Gestão de Duplicatas</div>
+        <div class="section-title">Revise e decida o que fazer com cada grupo duplicado</div>
         """, unsafe_allow_html=True)
+        acoes = render_painel_duplicatas(resultados, grupos_dup)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            modo_emitente = st.radio(
-                "Usar como nome:",
-                options=["emitente", "tomador"],
-                format_func=lambda x: "🏭 Emitente / Prestador (quem emitiu a NF)" if x == "emitente" else "🏢 Tomador / Destinatário (quem recebeu)",
-                index=0,
-                label_visibility="collapsed"
+    # ── Download ──────────────────────────────────────────────────────────
+    secao_dl = "05" if grupos_dup else "04"
+    st.markdown("""
+    <div class="section-label"><span>{s}</span> Download</div>
+    <div class="section-title">Baixar Arquivos Renomeados</div>
+    """.format(s=secao_dl), unsafe_allow_html=True)
+
+    # Se há duplicatas sem decisão, avisa mas não bloqueia
+    grupos_sem_decisao = [i for i in range(len(grupos_dup)) if i not in acoes]
+    if grupos_sem_decisao:
+        st.warning("⚠️ {} grupo(s) de duplicata ainda sem decisão. O download incluirá ambos os arquivos com sufixo _DUP1 / _DUP2 por padrão.".format(len(grupos_sem_decisao)))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if qtd == 1 and not grupos_dup:
+        r = resultados[0]
+        nome_dl = r['novo_nome'] if r['novo_nome'] != '-' else r['original']
+        st.download_button(label="📥 Baixar PDF Renomeado", data=r['_bytes'],
+            file_name=nome_dl, mime="application/pdf", use_container_width=True)
+    else:
+        pares = construir_arquivos_download(resultados, grupos_dup, acoes)
+        if pares:
+            zip_bytes = montar_zip(pares)
+            st.download_button(
+                label="📥 Baixar ZIP com Notas Fiscais Renomeadas ({} arquivo(s))".format(len(pares)),
+                data=zip_bytes,
+                file_name="NOTAS_FISCAIS_RENOMEADAS_{}.zip".format(timestamp),
+                mime="application/zip",
+                use_container_width=True
             )
-        modo = modo_emitente
+            st.success("✅ Pronto! Clique no botão acima para baixar os arquivos renomeados.")
+        else:
+            st.info("Nenhum arquivo selecionado para download após as decisões de duplicata.")
 
-        if st.button("🚀 Processar Notas Fiscais", type="primary", use_container_width=True):
-            with st.spinner("Processando notas fiscais..."):
-                zip_output, resultados = processar_pdfs(uploaded_files, modo=modo)
-
-            if resultados:
-                st.divider()
-                st.markdown("""
-                <div class="section-label"><span>03</span> Resultados</div>
-                <div class="section-title">Resumo do Processamento</div>
-                """, unsafe_allow_html=True)
-
-                render_metricas(resultados)
-
-                df_display = [{k: v for k, v in r.items() if not k.startswith('_')} for r in resultados]
-                st.dataframe(df_display, use_container_width=True, hide_index=True,
-                    column_config={
-                        'original':  st.column_config.TextColumn('Nome Original'),
-                        'novo_nome': st.column_config.TextColumn('Novo Nome'),
-                        'status':    st.column_config.TextColumn('Status'),
-                        'tipo':      st.column_config.TextColumn('Tipo'),
-                        'numero_nf': st.column_config.TextColumn('Numero NF'),
-                        'data':      st.column_config.TextColumn('Data de Emissao'),
-                        'emitente':  st.column_config.TextColumn('Emitente / Prestador'),
-                        'tomador':   st.column_config.TextColumn('Tomador / Destinatário'),
-                        'valor':     st.column_config.NumberColumn('Valor Total', format="R$ %.2f"),
-                    })
-
-                st.divider()
-                st.markdown("""
-                <div class="section-label"><span>04</span> Download</div>
-                <div class="section-title">Baixar Arquivos Renomeados</div>
-                """, unsafe_allow_html=True)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                if qtd == 1:
-                    r = resultados[0]
-                    nome_dl = r['novo_nome'] if r['novo_nome'] != '-' else r['original']
-                    st.download_button(label="📥 Baixar PDF Renomeado", data=r['_bytes'],
-                        file_name=nome_dl, mime="application/pdf", use_container_width=True)
-                else:
-                    st.download_button(label="📥 Baixar ZIP com Notas Fiscais Renomeadas",
-                        data=zip_output,
-                        file_name="NOTAS_FISCAIS_RENOMEADAS_{}.zip".format(timestamp),
-                        mime="application/zip", use_container_width=True)
-
-                st.success("✅ Pronto! Clique no botao acima para baixar os arquivos renomeados.")
-
-    with st.expander("ℹ️ Formato, Exemplos e Requisitos"):
+    # ── Expander de ajuda ─────────────────────────────────────────────────
+    with st.expander("ℹ️ Formato, Exemplos e Critérios de Duplicata"):
         st.markdown("""
         ### Formato do Nome
         ```
         NF [NUMERO] - RAZAO SOCIAL DO EMITENTE.PDF
         ```
-        ### Exemplos
-        | Antes | Depois |
-        |---|---|
-        | `NF_202001_-_PMZ.pdf` | `NF 202001 - PMZ DISTRIBUIDORA SA.PDF` |
-        | `152603...193.pdf` | `NF 6 - BERIT PECAS AUTOMOTIVAS LTDA ME.PDF` |
 
-        ### Como usar
-        1. Selecione um ou mais PDFs
-        2. Clique em **Processar Notas Fiscais**
-        3. PDF unico: baixa o PDF ja renomeado | Varios: baixa ZIP
+        ### Critérios de Duplicata Real
+        O sistema considera dois arquivos como **possíveis duplicatas** quando todos os campos abaixo coincidem:
+
+        | Campo | Descrição |
+        |---|---|
+        | **Número da NF** | Mesmo número extraído do PDF |
+        | **Fornecedor** | Mesma razão social usada na nomenclatura |
+        | **Data de Emissão** | Mesma data (normalizada para DD-MM-AAAA) |
+        | **Valor Total** | Mesmo valor (comparado com 2 casas decimais) |
+
+        > **Atenção:** Arquivos com número ou fornecedor não identificados **não** são marcados como duplicata.
+
+        ### Opções ao detectar duplicata
+        - **Ignorar duplicidade** — inclui os dois no ZIP com sufixo `_DUP1` / `_DUP2`
+        - **Manter apenas 1º** — exclui o(s) demais do download
+        - **Manter apenas 2º** — exclui o 1º do download
+        - **Baixar os dois** — inclui ambos com sufixo para diferenciação
 
         ### Formatos suportados
-        - NF-e DANFE (padrao SEFAZ) | NF-e **Omie** | NFS-e | CF-e/SAT
+        - NF-e DANFE (padrão SEFAZ) | NF-e **Omie** | NFS-e | CF-e/SAT
         """)
 
     st.divider()
