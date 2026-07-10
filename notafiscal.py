@@ -817,20 +817,20 @@ def render_painel_duplicatas(resultados, grupos_dup):
         chave_sessao = 'dup_acao_{}'.format(grupo_idx)
 
         with col1:
-            if st.button("✅ Ignorar duplicidade", key="ign_{}".format(grupo_idx), width='stretch'):
+            if st.button("✅ Ignorar duplicidade", key="ign_{}".format(grupo_idx), use_container_width=True):
                 st.session_state[chave_sessao] = 'ignorar'
         with col2:
             label_manter1 = "📄 Manter apenas 1º" if len(grupo) == 2 else "📄 Manter 1º arquivo"
-            if st.button(label_manter1, key="man1_{}".format(grupo_idx), width='stretch'):
+            if st.button(label_manter1, key="man1_{}".format(grupo_idx), use_container_width=True):
                 st.session_state[chave_sessao] = 'manter_primeiro'
         with col3:
             if len(grupo) >= 2:
-                if st.button("📄 Manter apenas 2º", key="man2_{}".format(grupo_idx), width='stretch'):
+                if st.button("📄 Manter apenas 2º", key="man2_{}".format(grupo_idx), use_container_width=True):
                     st.session_state[chave_sessao] = 'manter_segundo'
             else:
                 st.empty()
         with col4:
-            if st.button("📥 Baixar os dois", key="amb_{}".format(grupo_idx), width='stretch'):
+            if st.button("📥 Baixar os dois", key="amb_{}".format(grupo_idx), use_container_width=True):
                 st.session_state[chave_sessao] = 'baixar_ambos'
 
         acao_atual = st.session_state.get(chave_sessao, None)
@@ -962,7 +962,7 @@ def main():
             label_visibility="collapsed"
         )
 
-    if not st.button("🚀 Processar Notas Fiscais", type="primary", width='stretch'):
+    if not st.button("🚀 Processar Notas Fiscais", type="primary", use_container_width=True):
         return
 
     # ── Processamento ─────────────────────────────────────────────────────
@@ -987,7 +987,7 @@ def main():
             linha['status'] = '🔴 Possível duplicata'
         df_display.append(linha)
 
-    st.dataframe(df_display, width='stretch', hide_index=True,
+    st.dataframe(df_display, use_container_width=True, hide_index=True,
         column_config={
             'original':  st.column_config.TextColumn('Nome Original'),
             'novo_nome': st.column_config.TextColumn('Novo Nome'),
@@ -1029,7 +1029,7 @@ def main():
         r = resultados[0]
         nome_dl = r['novo_nome'] if r['novo_nome'] != '-' else r['original']
         st.download_button(label="📥 Baixar PDF Renomeado", data=r['_bytes'],
-            file_name=nome_dl, mime="application/pdf", width='stretch')
+            file_name=nome_dl, mime="application/pdf", use_container_width=True)
     else:
         pares = construir_arquivos_download(resultados, grupos_dup, acoes)
         if pares:
@@ -1039,7 +1039,7 @@ def main():
                 data=zip_bytes,
                 file_name="NOTAS_FISCAIS_RENOMEADAS_{}.zip".format(timestamp),
                 mime="application/zip",
-                width='stretch'
+                use_container_width=True
             )
             st.success("✅ Pronto! Clique no botão acima para baixar os arquivos renomeados.")
         else:
